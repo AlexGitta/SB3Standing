@@ -66,6 +66,15 @@ def main():
     env = DummyVecEnv([lambda: StandupEnv()])
     env = VecNormalize(env, norm_obs=True, norm_reward=True)
     checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
+
+    ppo_hyperparams = {
+        'learning_rate': LEARNING_RATE,
+        'clip_range': CLIP_PARAM,
+        'n_epochs': PPO_EPOCHS,
+        'ent_coef': ENTROPY_COEF,
+        'vf_coef': LOSS_COEF,
+    }
+
     if VISUALISE:
         input_state = InputState()
         # Initialize GLFW and create window
@@ -89,7 +98,7 @@ def main():
         mujoco.mjv_defaultOption(option)
 
         # Initialize agent
-        model = PPO('MlpPolicy', env, verbose=1)
+        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
         checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
         # Initialize state
@@ -253,7 +262,7 @@ def main():
         glfw.terminate()
 
     else:
-        model = PPO('MlpPolicy', env, verbose=1)
+        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
         model.learn(total_timesteps=MAX_STEPS, callback=checkpoint_callback)
 
 if __name__ == "__main__":
