@@ -1,2 +1,2 @@
 # SB3Standing
-Standing program implemented with Stable Baselines 3
+Standing (balance board) program implemented with Stable Baselines 3
