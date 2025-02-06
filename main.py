@@ -18,11 +18,10 @@ from gym import spaces
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidnew.xml', 'r') as f:
+        with open('resources/humanoidboard.xml', 'r') as f:
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid)
             self.data = mujoco.MjData(self.model)
-
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
@@ -39,6 +38,8 @@ class StandupEnv(gym.Env):
 
     def reset(self):
         mujoco.mj_resetData(self.model, self.data)
+        starting_pose = self.model.key_qpos[0]
+        self.data.qpos[:] = starting_pose
         self.data.qvel[:] = 0
         mujoco.mj_forward(self.model, self.data)
         return self.get_state()
@@ -52,9 +53,21 @@ class StandupEnv(gym.Env):
 
     def calculate_reward(self):
         head_height = self.data.xpos[self.model.body('head').id][2]
-        reward = head_height  # Simplified reward for demonstration
+        reward = head_height 
+
+        feet_on_ground = FEET_COST_WEIGHT * (np.exp(-20.0 * self.data.xpos[self.model.body('foot_left').id][2]) * np.exp(-20.0 * self.data.xpos[self.model.body('foot_right').id][2]))
+
+        reward += feet_on_ground
+
+        # Action penalty
+        action_penalty = np.sum(np.square(self.data.ctrl)) * CTRL_COST_WEIGHT 
+        reward -= action_penalty
+
         done = head_height < EARLY_TERMINATION_HEIGHT
+        if (VISUALISE):
+            print(f"Head Height: {head_height}, Feet: {feet_on_ground}, Action: {action_penalty}, Reward: {reward}")
         return reward, done
+    
 
     def render(self, mode='human'):
         pass
