@@ -9,7 +9,7 @@ import glob
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.vec_env import VecNormalize
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from config.config import *
 from environment.camera import InputState, center_camera_on_humanoid
 import gym
@@ -18,17 +18,18 @@ from gym import spaces
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidboard.xml', 'r') as f:
+        with open('resources/humanoidnew1.xml', 'r') as f:
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid)
             self.data = mujoco.MjData(self.model)
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
+        self.episode_steps = 0
 
     def get_state(self):
         return np.concatenate([
-            self.data.qpos.flat[2:],  # Skip root x/y coordinates
+            self.data.qpos.flat,  # Skip root x/y coordinates
             self.data.qvel.flat,
             self.data.cinert.flat,
             self.data.cvel.flat,
@@ -38,8 +39,9 @@ class StandupEnv(gym.Env):
 
     def reset(self):
         mujoco.mj_resetData(self.model, self.data)
-        starting_pose = self.model.key_qpos[0]
-        self.data.qpos[:] = starting_pose
+        #starting_pose = self.model.key_qpos[0]
+        #self.data.qpos[:] = starting_pose
+        self.episode_steps = 0
         self.data.qvel[:] = 0
         mujoco.mj_forward(self.model, self.data)
         return self.get_state()
@@ -49,23 +51,41 @@ class StandupEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         next_state = self.get_state()
         reward, done = self.calculate_reward()
+        self.episode_steps += 1
         return next_state, reward, done, {}
 
     def calculate_reward(self):
         head_height = self.data.xpos[self.model.body('head').id][2]
-        reward = head_height 
+        height_reward = (head_height - EARLY_TERMINATION_HEIGHT) * HEIGHT_BONUS
+        reward = height_reward
 
-        feet_on_ground = FEET_COST_WEIGHT * (np.exp(-20.0 * self.data.xpos[self.model.body('foot_left').id][2]) * np.exp(-20.0 * self.data.xpos[self.model.body('foot_right').id][2]))
+       # feet_on_ground = FEET_COST_WEIGHT * (np.exp(-20.0 * self.data.xpos[self.model.body('foot_left').id][2]) * np.exp(-20.0 * self.data.xpos[self.model.body('foot_right').id][2]))
 
-        reward += feet_on_ground
+      #  reward += feet_on_ground
+
+        # Survival bonus
+        survival_reward = HEALTH_COST_WEIGHT * self.episode_steps
+        reward += survival_reward
 
         # Action penalty
         action_penalty = np.sum(np.square(self.data.ctrl)) * CTRL_COST_WEIGHT 
         reward -= action_penalty
 
         done = head_height < EARLY_TERMINATION_HEIGHT
+
+        balance_board_id = self.model.body('balance_board').id
+        balrotation = self.data.xquat[balance_board_id]
+      #  print(f"{balrotation[2]:.6f}")
+
+        # Penalize rotation of the balance board
+        rotation_penaltyside = abs(balrotation[1]) * BALANCE_COST_WEIGHT 
+        rotation_penaltyfwdback = abs(balrotation[2]) * BALANCE_COST_WEIGHT 
+        rotation_penalty = rotation_penaltyside + rotation_penaltyfwdback
+        reward -= rotation_penalty
+
+        # print raw rewards for debugging (pre normalisation)
         if (VISUALISE):
-            print(f"Head Height: {head_height}, Feet: {feet_on_ground}, Action: {action_penalty}, Reward: {reward}")
+            print(f"Height Reward: {height_reward}, Survival Reward: {survival_reward}, Action: {action_penalty}, Rotation Penalty : {rotation_penalty}, Reward: {reward}")
         return reward, done
     
 
@@ -74,6 +94,19 @@ class StandupEnv(gym.Env):
 
     def close(self):
         pass
+
+class TensorboardCallback(BaseCallback):
+    """
+    Custom callback for plotting additional values in tensorboard.
+    """
+
+    def __init__(self, verbose=0):
+        super(TensorboardCallback, self).__init__(verbose)
+
+    def _on_step(self) -> bool:
+        # Log episode steps
+        self.logger.record("episode_steps", self.training_env.get_attr("episode_steps")[0])
+        return True
 
 def main():
     env = DummyVecEnv([lambda: StandupEnv()])
@@ -111,12 +144,13 @@ def main():
         mujoco.mjv_defaultOption(option)
 
         # Initialize agent
-        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
+        model = PPO('MlpPolicy', env, verbose=1)
         checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
         # Initialize state
         state = env.reset()
-        paused = False
+        paused = startPaused  # Use the startPaused config variable
+        reward = 0
 
         def handle_input(window, input_state, camera):
             def mouse_button_callback(window, button, action, mods):
@@ -178,10 +212,10 @@ def main():
 
         update_checkpoint_list()
 
-        reward_buffer = np.zeros(PLOT_STEPS, dtype=np.float32)
+        reward_buffer = np.full(PLOT_STEPS, np.nan, dtype=np.float32)
         reward_index = 0
-        reward_min = float('inf')
-        reward_max = float('-inf')
+        reward_min = float('0')
+        reward_max = float('0')
 
         while not glfw.window_should_close(window):
             if not paused:
@@ -190,9 +224,9 @@ def main():
                 state, reward, done, _ = env.step(action)
                 reward_buffer[reward_index] = reward
                 reward_index = (reward_index + 1) % PLOT_STEPS
-                reward_min = min(reward_min, np.min(reward_buffer))
-                reward_max = max(reward_max, np.max(reward_buffer))
-
+                reward_min = min(reward_min, np.nanmin(reward_buffer))
+                reward_max = max(reward_max, np.nanmax(reward_buffer))
+              #  print(reward)
                 # Check episode end
                 if done:
                     state = env.reset()
@@ -275,8 +309,11 @@ def main():
         glfw.terminate()
 
     else:
-        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
-        model.learn(total_timesteps=MAX_STEPS, callback=checkpoint_callback)
+        log_path = "./tensorboard/"
+        model = PPO('MlpPolicy', env, verbose=1, tensorboard_log=log_path)
+        #model =  model = PPO.load(".\checkpoints\ppo_model_6000000_steps.zip", env=env)
+        tensorboard_callback = TensorboardCallback()
+        model.learn(total_timesteps=MAX_STEPS, callback=[checkpoint_callback, tensorboard_callback])
 
 if __name__ == "__main__":
     main()
