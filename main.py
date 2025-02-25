@@ -310,7 +310,7 @@ def main():
 
     else:
         log_path = "./tensorboard/"
-        model = PPO('MlpPolicy', env, verbose=1, tensorboard_log=log_path)
+        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams, tensorboard_log=log_path)
         #model =  model = PPO.load(".\checkpoints\ppo_model_6000000_steps.zip", env=env)
         tensorboard_callback = TensorboardCallback()
         model.learn(total_timesteps=MAX_STEPS, callback=[checkpoint_callback, tensorboard_callback])
