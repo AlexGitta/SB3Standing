@@ -1,6 +1,6 @@
 import mujoco
+import os
 import glfw
-import torch
 import numpy as np
 import imgui
 from imgui.integrations.glfw import GlfwRenderer
@@ -14,22 +14,24 @@ from config.config import *
 from environment.camera import InputState, center_camera_on_humanoid
 import gym
 from gym import spaces
+import argparse
 
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidnew1.xml', 'r') as f:
+        with open('resources/humanoidnew1.xml', 'r') as f: # Open xml file for humanoid model
             humanoid = f.read()
-            self.model = mujoco.MjModel.from_xml_string(humanoid)
+            self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
         self.episode_steps = 0
+        self.episode_reward = 0
 
-    def get_state(self):
+    def get_state(self): # function to return current state of simulation environment
         return np.concatenate([
-            self.data.qpos.flat,  # Skip root x/y coordinates
+            self.data.qpos.flat,  
             self.data.qvel.flat,
             self.data.cinert.flat,
             self.data.cvel.flat,
@@ -37,16 +39,17 @@ class StandupEnv(gym.Env):
             self.data.cfrc_ext.flat,
         ])
 
-    def reset(self):
+    def reset(self): # function to reset the environment on failure of task
         mujoco.mj_resetData(self.model, self.data)
         #starting_pose = self.model.key_qpos[0]
         #self.data.qpos[:] = starting_pose
         self.episode_steps = 0
+        self.episode_reward = 0
         self.data.qvel[:] = 0
         mujoco.mj_forward(self.model, self.data)
         return self.get_state()
 
-    def step(self, action):
+    def step(self, action): # function to take action and call reward function
         self.data.ctrl = np.clip(action, -1, 1)
         mujoco.mj_step(self.model, self.data)
         next_state = self.get_state()
@@ -59,10 +62,6 @@ class StandupEnv(gym.Env):
         height_reward = (head_height - EARLY_TERMINATION_HEIGHT) * HEIGHT_BONUS
         reward = height_reward
 
-       # feet_on_ground = FEET_COST_WEIGHT * (np.exp(-20.0 * self.data.xpos[self.model.body('foot_left').id][2]) * np.exp(-20.0 * self.data.xpos[self.model.body('foot_right').id][2]))
-
-      #  reward += feet_on_ground
-
         # Survival bonus
         survival_reward = HEALTH_COST_WEIGHT * self.episode_steps
         reward += survival_reward
@@ -71,11 +70,10 @@ class StandupEnv(gym.Env):
         action_penalty = np.sum(np.square(self.data.ctrl)) * CTRL_COST_WEIGHT 
         reward -= action_penalty
 
-        done = head_height < EARLY_TERMINATION_HEIGHT
+        # Get rotation of board
 
         balance_board_id = self.model.body('balance_board').id
         balrotation = self.data.xquat[balance_board_id]
-      #  print(f"{balrotation[2]:.6f}")
 
         # Penalize rotation of the balance board
         rotation_penaltyside = abs(balrotation[1]) * BALANCE_COST_WEIGHT 
@@ -83,6 +81,9 @@ class StandupEnv(gym.Env):
         rotation_penalty = rotation_penaltyside + rotation_penaltyfwdback
         reward -= rotation_penalty
 
+        self.episode_reward += reward
+
+        done = head_height < EARLY_TERMINATION_HEIGHT
         # print raw rewards for debugging (pre normalisation)
         if (VISUALISE):
             print(f"Height Reward: {height_reward}, Survival Reward: {survival_reward}, Action: {action_penalty}, Rotation Penalty : {rotation_penalty}, Reward: {reward}")
@@ -92,39 +93,53 @@ class StandupEnv(gym.Env):
     def render(self, mode='human'):
         pass
 
-    def close(self):
-        pass
 
 class TensorboardCallback(BaseCallback):
-    """
-    Custom callback for plotting additional values in tensorboard.
-    """
-
+    
+    # custom callback for plotting additional values in tensorboard
     def __init__(self, verbose=0):
         super(TensorboardCallback, self).__init__(verbose)
 
     def _on_step(self) -> bool:
         # Log episode steps
+        self.logger.record("episode_total_reward", self.training_env.get_attr("episode_reward")[0]) # record episode reward and steps
         self.logger.record("episode_steps", self.training_env.get_attr("episode_steps")[0])
         return True
 
 def main():
-    env = DummyVecEnv([lambda: StandupEnv()])
-    env = VecNormalize(env, norm_obs=True, norm_reward=True)
+    parser = argparse.ArgumentParser(description="PPO Standing SB3")
+    parser.add_argument('--visualise', action='store_true', help='Enable visualisation')
+    parser.add_argument('--start_paused', action='store_true', help='Start paused')
+    parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE, help='Learning rate')
+    parser.add_argument('--clip_param', type=float, default=CLIP_PARAM, help='Clip parameter')
+    parser.add_argument('--ppo_epochs', type=int, default=PPO_EPOCHS, help='PPO epochs')
+    parser.add_argument('--ent_coef', type=float, default=ENTROPY_COEF, help='Entropy coefficient')
+    parser.add_argument('--vf_coef', type=float, default=LOSS_COEF, help='Value function coefficient')
+    args = parser.parse_args()
+
+    argVIS = args.visualise
+    argSP = args.start_paused
+    argLR = args.learning_rate
+    argCP = args.clip_param
+    argEPOCH = args.ppo_epochs
+    argENTCOEF = args.ent_coef
+    argLOCOEF = args.vf_coef
+
+    env = DummyVecEnv([lambda: StandupEnv()]) # create environment
+    env = VecNormalize(env, norm_obs=True, norm_reward=True) #  normalize environment (rewards between fixed range)
     checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
-    ppo_hyperparams = {
-        'learning_rate': LEARNING_RATE,
-        'clip_range': CLIP_PARAM,
-        'n_epochs': PPO_EPOCHS,
-        'ent_coef': ENTROPY_COEF,
-        'vf_coef': LOSS_COEF,
+    ppo_hyperparams = { # hyperparameters for PPO
+        'learning_rate': argLR,
+        'clip_range': argCP,
+        'n_epochs': argEPOCH,
+        'ent_coef': argENTCOEF,
+        'vf_coef': argLOCOEF,
     }
 
-    if VISUALISE:
+    if argVIS:
         input_state = InputState()
         # Initialize GLFW and create window
-        episode = 1
         glfw.init()
         window = glfw.create_window(1200, 900, "Standup Task", None, None)
         glfw.make_context_current(window)
@@ -149,7 +164,7 @@ def main():
 
         # Initialize state
         state = env.reset()
-        paused = startPaused  # Use the startPaused config variable
+        paused = argSP 
         reward = 0
 
         def handle_input(window, input_state, camera):
@@ -311,7 +326,6 @@ def main():
     else:
         log_path = "./tensorboard/"
         model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams, tensorboard_log=log_path)
-        #model =  model = PPO.load(".\checkpoints\ppo_model_6000000_steps.zip", env=env)
         tensorboard_callback = TensorboardCallback()
         model.learn(total_timesteps=MAX_STEPS, callback=[checkpoint_callback, tensorboard_callback])
 
