@@ -3,6 +3,7 @@ import os
 import glfw
 import numpy as np
 import imgui
+import torch 
 from imgui.integrations.glfw import GlfwRenderer
 import matplotlib.pyplot as plt
 import glob
@@ -109,7 +110,7 @@ class TensorboardCallback(BaseCallback):
 def main():
     parser = argparse.ArgumentParser(description="PPO Standing SB3")
     parser.add_argument('--visualise', action='store_true', help='Enable visualisation')
-    parser.add_argument('--start_paused', action='store_true', help='Start paused')
+    parser.add_argument('--startpaused', action='store_true', help='Start paused')
     parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE, help='Learning rate')
     parser.add_argument('--clip_param', type=float, default=CLIP_PARAM, help='Clip parameter')
     parser.add_argument('--ppo_epochs', type=int, default=PPO_EPOCHS, help='PPO epochs')
@@ -118,7 +119,7 @@ def main():
     args = parser.parse_args()
 
     argVIS = args.visualise
-    argSP = args.start_paused
+    argSP = args.startpaused
     argLR = args.learning_rate
     argCP = args.clip_param
     argEPOCH = args.ppo_epochs
@@ -130,11 +131,19 @@ def main():
     checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
     ppo_hyperparams = { # hyperparameters for PPO
-        'learning_rate': argLR,
-        'clip_range': argCP,
-        'n_epochs': argEPOCH,
-        'ent_coef': argENTCOEF,
-        'vf_coef': argLOCOEF,
+        'learning_rate': 0.0003,
+    'clip_range': 0.2,
+    'n_epochs': 30,
+    'ent_coef': 0.01,
+    'vf_coef': 0.7,
+    'gamma': 0.995,
+    'gae_lambda': 0.97,
+    'batch_size': 2048,
+    'policy_kwargs': dict(
+        net_arch=[dict(pi=[256, 256], svf=[256, 256])],
+        activation_fn=torch.nn.ReLU
+    ),
+    'normalize_advantage': True
     }
 
     if argVIS:
