@@ -111,6 +111,7 @@ def main():
     parser = argparse.ArgumentParser(description="PPO Standing SB3")
     parser.add_argument('--visualise', action='store_true', help='Enable visualisation')
     parser.add_argument('--startpaused', action='store_true', help='Start paused')
+    parser.add_argument('--checkpoint', type=int, default=1, help='Checkpoint (1-3)')
     parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE, help='Learning rate')
     parser.add_argument('--clip_param', type=float, default=CLIP_PARAM, help='Clip parameter')
     parser.add_argument('--ppo_epochs', type=int, default=PPO_EPOCHS, help='PPO epochs')
@@ -120,6 +121,7 @@ def main():
 
     argVIS = args.visualise
     argSP = args.startpaused
+    argCheck = args.checkpoint
     argLR = args.learning_rate
     argCP = args.clip_param
     argEPOCH = args.ppo_epochs
@@ -168,7 +170,12 @@ def main():
         mujoco.mjv_defaultOption(option)
 
         # Initialize agent
-        model = PPO('MlpPolicy', env, verbose=1)
+        if (argCheck == 1):
+            model = PPO('MlpPolicy', env, verbose=1)
+        elif (argCheck == 2):
+            model = PPO.load('./checkpoints/ppo_model_1000000_steps.zip', env=env)
+        elif (argCheck == 3):
+            model = PPO.load('./checkpoints/ppo_model_2000000_steps.zip', env=env)
         checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
         # Initialize state
@@ -256,6 +263,16 @@ def main():
                     state = env.reset()
 
             center_camera_on_humanoid(camera, env.get_attr('data')[0], env.get_attr('model')[0])
+            # Check tilt_status.txt file to see if we should unpause
+            try:
+                with open("tilt_status.txt", "r") as f:
+                    status = f.read().strip()
+                    if status == "running" and paused:
+                        print("Unpausing simulation due to board tilt")
+                        paused = False
+            except Exception as e:
+                print(f"Error reading status file: {e}")
+                
             # Start ImGui frame
             impl.process_inputs()
             imgui.new_frame()
