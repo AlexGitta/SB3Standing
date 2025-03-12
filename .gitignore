@@ -1,0 +1,18 @@
+# Python bytecode files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python testing
+.pytest_cache/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Checkpoint files
+checkpoints/
+
+# Tensorboard logs
+tensorboard/
