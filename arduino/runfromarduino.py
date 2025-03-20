@@ -5,12 +5,12 @@ import os
 
 # Configure serial connection
 ser = serial.Serial('COM3', 115200, timeout=1)
-time.sleep(2)  # Allow time for Arduino to initialize
+time.sleep(2) 
 
 # Track active simulation process
 active_process = None
 
-# Create status file for communication with simulation
+# File for communicating with main script
 STATUS_FILE = "tilt_status.txt"
 
 # Initialize the status file with "paused"
@@ -31,10 +31,10 @@ while True:
     
     if ser.in_waiting:
         line = ser.readline().decode('utf-8').strip()
-        # print(f"Raw data: {line}")  # Debug output to see what's being received
+        # print(f"Raw data: {line}")  # Debug
         
         try:
-            # Parse comma-separated values: but1,but2,but3,gx,gy,gz,ax,ay,az
+            # Reading CSV: but1,but2,but3,gx,gy,gz,ax,ay,az
             values = line.split(',')
             if len(values) == 9:
                 but1 = int(values[0])

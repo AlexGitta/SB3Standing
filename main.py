@@ -20,7 +20,7 @@ import argparse
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidnew1.xml', 'r') as f: # Open xml file for humanoid model
+        with open('resources/humanoid3.xml', 'r') as f: # Open xml file for humanoid model
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
@@ -165,8 +165,8 @@ def main():
         # Set default camera and options with adjusted angle
         mujoco.mjv_defaultCamera(camera)
         camera.distance = 6.0
-        camera.azimuth = 180
-        camera.elevation = -20
+        camera.azimuth = 90
+        camera.elevation = -15
         mujoco.mjv_defaultOption(option)
 
         # Initialize agent
