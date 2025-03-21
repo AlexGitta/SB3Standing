@@ -1,3 +1,12 @@
+<!-- 
+      Humanoid with balance board model.
+      The humanoid is a modified version of the CMU humanoid model from dm_control.
+      It has been edited to contain a balance board mesh and use the skybox/grid from the original MuJoCo humanoid model.
+      The balance board mesh is a .stl file modelled in blender.
+      The balance board is welded to the feet of the humanoid.
+      Edited by Alex Evans.
+-->
+
 <mujoco model="humanoid_with_balance_board">
 
   <visual>
@@ -67,13 +76,13 @@
             <joint name="ltibiarx" axis="1 0 0" range="1   170" class="stiff_low"/>
             <geom name="ltibia" size="0.03 0.1825614" pos="0 -0.202846 0" quat="0.7 -0.7 -0.1228 -0.1228"/>
             <geom name="lcalf" size="0.045 0.08" pos="0 -0.1 -.01" quat="0.7 -0.7 -0.1228 -0.1228"/>
-            <body name="lfoot" pos="0 -0.405693 0" quat="0.707107 -0.707107 0 0">
-              <site name="lfoot_touch" type="box" pos="-.005 -.02 -0.025" size=".04 .08 .02" euler="10 0 0" class="touch"/>
+            <body name="lfoot" pos="0 -0.405693 0" quat="1 0 0 0">
+              <site name="lfoot_touch" type="box" pos="-.005 -.02 -0.025" size=".04 .08 .02" euler="0 0 0" class="touch"/>
               <joint name="lfootrz" axis="0 0 1" range="-70 20" class="stiff_medium"/>
               <joint name="lfootrx" axis="1 0 0" range="-45    90" class="stiff_medium"/>
-              <geom name="lfoot0" size="0.02 0.06" pos="-0.02 -0.023 -0.01" euler="100 -2 0"/>
-              <geom name="lfoot1" size="0.02 0.06" pos="0 -0.023 -0.01" euler="100 0 0"/>
-              <geom name="lfoot2" size="0.02 0.06" pos=".01 -0.023 -0.01" euler="100 10 0"/>
+              <geom name="lfoot0" size="0.02 0.06" pos="-0.02 -0.023 -0.01" euler="0 -2 0"/>
+              <geom name="lfoot1" size="0.02 0.06" pos="0 -0.023 -0.01" euler="0 0 0"/>
+              <geom name="lfoot2" size="0.02 0.06" pos=".01 -0.023 -0.01" euler="0 10 0"/>
               <body name="ltoes" pos="0 -0.106372 -0.0227756">
                 <joint name="ltoesrx" axis="1 0 0" range="-90 20"/>
                 <geom name="ltoes0" type="sphere" size="0.02" pos="-.025 -0.01 -.01"/>
@@ -86,7 +95,7 @@
         </body>
       </body>
       <body name="rhipjoint">
-        <geom name="rhipjoint" size="0.008 0.022" pos="-0.051 -0.046 0.025" quat="0.574856 -0.547594 0.608014 0"/>
+        <geom name="rhipjoint" size="0.008 0.022" pos="-0.051 -0.046 0.025" quat="0.74856 -0.547594 0.608014 0"/>
         <body name="rfemur" pos="-0.102 -0.092 0.05" quat="1 0 0 -0.17365">
           <joint name="rfemurrz" axis="0 0 1" range="-70 60" class="stiff_medium"/>
           <joint name="rfemurry" axis="0 1 0" range="-70 70" class="stiff_medium"/>
@@ -96,13 +105,13 @@
             <joint name="rtibiarx" axis="1 0 0" range="1   170" class="stiff_low"/>
             <geom name="rtibia" size="0.03 0.1825614" pos="0 -0.202846 0" quat="0.7 -0.7 0.1228 0.1228"/>
             <geom name="rcalf" size="0.045 0.08" pos="0 -0.1 -.01" quat="0.7 -0.7 -0.1228 -0.1228"/>
-            <body name="rfoot" pos="0 -0.405693 0" quat="0.707107 -0.707107 0 0">
-              <site name="rfoot_touch" type="box" pos=".005 -.02 -0.025" size=".04 .08 .02" euler="10 0 0" class="touch"/>
+            <body name="rfoot" pos="0 -0.405693 0" quat="1 0 0 0">
+              <site name="rfoot_touch" type="box" pos=".005 -.02 -0.025" size=".04 .08 .02" euler="0 0 0" class="touch"/>
               <joint name="rfootrz" axis="0 0 1" range="-20 70" class="stiff_medium"/>
               <joint name="rfootrx" axis="1 0 0" range="-45    90" class="stiff_medium"/>
-              <geom name="rfoot0" size="0.02 0.06" pos="0.02 -0.023 -0.01" euler="100 2 0"/>
-              <geom name="rfoot1" size="0.02 0.06" pos="0 -0.023 -0.01" euler="100 0 0"/>
-              <geom name="rfoot2" size="0.02 0.06" pos="-.01 -0.023 -0.01" euler="100 -10 0"/>
+              <geom name="rfoot0" size="0.02 0.06" pos="0.02 -0.023 -0.01" euler="0 2 0"/>
+              <geom name="rfoot1" size="0.02 0.06" pos="0 -0.023 -0.01" euler="0 0 0"/>
+              <geom name="rfoot2" size="0.02 0.06" pos="-.01 -0.023 -0.01" euler="0 -10 0"/>
               <body name="rtoes" pos="0 -0.106372 -0.0227756">
                 <joint name="rtoesrx" axis="1 0 0" range="-90 20"/>
                 <geom name="rtoes0" type="sphere" size="0.02" pos=".025 -0.01 -.01"/>
@@ -244,13 +253,12 @@
     <exclude body1="upperneck" body2="rclavicle"/>
   </contact>
 
-  <!-- Weld the feet to the balance board like in humanoidnew1.xml -->
+  <!-- Welding feet to balance board -->
   <equality>
     <weld name="weld_foot_right" body1="rfoot" body2="balance_board" relpose="0 0 0 0 0 0 0"/>
     <weld name="weld_foot_left" body1="lfoot" body2="balance_board" relpose="0 0 0 0 0 0 0"/>
   </equality>
 
-  <!-- Actuator configuration from humanoid2.xml -->
   <actuator>
     <motor name="headrx" joint="headrx" gear="20"/>
     <motor name="headry" joint="headry" gear="20"/>
@@ -309,16 +317,5 @@
     <motor name="upperneckry" joint="upperneckry" gear="20"/>
     <motor name="upperneckrz" joint="upperneckrz" gear="20"/>
   </actuator>
-
-  <sensor>
-    <subtreelinvel name="thorax_subtreelinvel" body="thorax"/>
-    <velocimeter name="sensor_root_veloc" site="root"/>
-    <gyro name="sensor_root_gyro" site="root"/>
-    <accelerometer name="sensor_root_accel" site="root"/>
-    <touch name="sensor_touch_ltoes" site="ltoes_touch"/>
-    <touch name="sensor_touch_rtoes" site="rtoes_touch"/>
-    <touch name="sensor_touch_rfoot" site="rfoot_touch"/>
-    <touch name="sensor_touch_lfoot" site="lfoot_touch"/>
-  </sensor>
 
 </mujoco>

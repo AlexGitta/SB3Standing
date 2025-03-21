@@ -16,3 +16,6 @@ checkpoints/
 
 # Tensorboard logs
 tensorboard/
+
+# imgui
+imgui.ini

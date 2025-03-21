@@ -133,19 +133,20 @@ def main():
     checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
     ppo_hyperparams = { # hyperparameters for PPO
-        'learning_rate': 0.0003,
-    'clip_range': 0.2,
-    'n_epochs': 30,
-    'ent_coef': 0.01,
-    'vf_coef': 0.7,
-    'gamma': 0.995,
-    'gae_lambda': 0.97,
-    'batch_size': 2048,
-    'policy_kwargs': dict(
-        net_arch=[dict(pi=[256, 256], svf=[256, 256])],
-        activation_fn=torch.nn.ReLU
-    ),
-    'normalize_advantage': True
+            'learning_rate': 0.00005,  
+            'clip_range': 0.2, 
+            'n_epochs': 5,  
+            'ent_coef': 0.01,  
+            'vf_coef': 0.7,
+            'gamma': 0.99,
+            'gae_lambda': 0.97,
+            'batch_size': 2048,
+            'policy_kwargs': dict(
+                net_arch=dict(pi=[256, 128], vf=[256, 128]),
+                activation_fn=torch.nn.ELU
+            ),
+            'normalize_advantage': True,
+            'max_grad_norm': 0.5,
     }
 
     if argVIS:
