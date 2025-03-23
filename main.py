@@ -107,6 +107,13 @@ class TensorboardCallback(BaseCallback):
         self.logger.record("episode_steps", self.training_env.get_attr("episode_steps")[0])
         return True
 
+def linear_schedule(initial_value: float, final_value: float):
+    def scheduler(progress_remaining: float) -> float:
+        return final_value + progress_remaining * (initial_value - final_value)
+    
+    return scheduler
+    
+
 def main():
     parser = argparse.ArgumentParser(description="PPO Standing SB3")
     parser.add_argument('--visualise', action='store_true', help='Enable visualisation')
@@ -132,9 +139,12 @@ def main():
     env = VecNormalize(env, norm_obs=True, norm_reward=True) #  normalize environment (rewards between fixed range)
     checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
 
+    initial_lr = 0.00005
+    final_lr = 0.000001
+
     ppo_hyperparams = { # hyperparameters for PPO
-            'learning_rate': 0.00005,  
-            'clip_range': 0.2, 
+            'learning_rate': linear_schedule(initial_lr, final_lr),
+            'clip_range': 0.1, 
             'n_epochs': 5,  
             'ent_coef': 0.01,  
             'vf_coef': 0.7,
