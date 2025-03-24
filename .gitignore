@@ -16,6 +16,7 @@ checkpoints/
 
 # Tensorboard logs
 tensorboard/
+*.pkl
 
 # imgui
 imgui.ini
