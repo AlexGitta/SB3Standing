@@ -146,7 +146,7 @@ def main():
             'learning_rate': linear_schedule(initial_lr, final_lr),
             'clip_range': 0.1, 
             'n_epochs': 5,  
-            'ent_coef': 0,  
+            'ent_coef': 0.1,  
             'vf_coef': 0.7,
             'gamma': 0.99,
             'gae_lambda': 0.97,

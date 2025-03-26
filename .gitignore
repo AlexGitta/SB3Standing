@@ -8,11 +8,12 @@ __pycache__/
 
 # Distribution / packaging
 dist/
-build/
+build/g
 *.egg-info/
 
 # Checkpoint files
 checkpoints/
+vecpoints/
 
 # Tensorboard logs
 tensorboard/

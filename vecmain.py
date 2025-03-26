@@ -21,7 +21,7 @@ import argparse
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoid3.xml', 'r') as f: # Open xml file for humanoid model
+        with open('resources/humanoid3fixed.xml', 'r') as f: # Open xml file for humanoid model
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
@@ -130,10 +130,15 @@ class TensorboardCallback(BaseCallback):
 
 def linear_schedule(initial_value: float, final_value: float):
     def scheduler(progress_remaining: float) -> float:
-        return final_value + progress_remaining * (initial_value - final_value)
+        return final_value + (initial_value - final_value) * (progress_remaining)
     
     return scheduler
     
+def exponentential_schedule(initial_value: float, final_value: float):
+    def scheduler(progress_remaining: float) -> float:
+        return final_value + (initial_value - final_value) * (progress_remaining ** 4)
+    
+    return scheduler
 
 def main():
 
@@ -173,26 +178,38 @@ def main():
     argENTCOEF = args.ent_coef
     argLOCOEF = args.vf_coef
 
-    checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
+    os.makedirs('./vecpoints/', exist_ok=True)
 
+    checkpoint_callback = CheckpointCallback(
+        save_freq=SAVE_AT_STEP // 6,
+        save_path='./vecpoints/',
+        name_prefix='ppo_model',
+        verbose=1
+    )
+    
     initial_lr = 0.00005
     final_lr = 0.000001
+    initial_clip = 0.3
+    final_clip = 0.01
 
     ppo_hyperparams = { # hyperparameters for PPO
             'learning_rate': linear_schedule(initial_lr, final_lr),
-            'clip_range': 0.2, 
+            'clip_range': 0.2,
+            'target_kl': 0.015,
             'n_epochs': 4,  
-            'ent_coef': 0.008,  
+            'ent_coef': 0.004,  
             'vf_coef': 0.7,
             'gamma': 0.99,
             'gae_lambda': 0.95,
-            'batch_size': 4096,
+            'batch_size': 8192,
+            'n_steps': 2048,
             'policy_kwargs': dict(
-                net_arch=dict(pi=[256, 128], vf=[256, 128]),
-                activation_fn=torch.nn.ELU
+                net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),
+                activation_fn=torch.nn.ELU,
+                ortho_init=True,
             ),
             'normalize_advantage': True,
-            'max_grad_norm': 0.5,
+            'max_grad_norm': 0.3,
     }
 
     if argVIS:
@@ -218,20 +235,6 @@ def main():
         camera.elevation = -15
         mujoco.mjv_defaultOption(option)
 
-        # Initialize agent
-        if (argCheck == 1):
-            model = PPO('MlpPolicy', env, verbose=1)
-        elif (argCheck == 2):
-            model = PPO.load('./checkpoints/ppo_model_1000000_steps.zip', env=env)
-        elif (argCheck == 3):
-            model = PPO.load('./checkpoints/ppo_model_2000000_steps.zip', env=env)
-        checkpoint_callback = CheckpointCallback(save_freq=SAVE_AT_STEP, save_path='./checkpoints/', name_prefix='ppo_model')
-
-
-        try:
-            VecNormalize.load("vec_normalize.pkl", env)
-        except FileNotFoundError:
-            print("No normalization file found")
 
         # Initialize state
         state = env.reset()
@@ -293,7 +296,7 @@ def main():
 
         def update_checkpoint_list():
             nonlocal checkpoint_files
-            checkpoint_files = glob.glob(os.path.join("checkpoints", "*.zip"))
+            checkpoint_files = glob.glob(os.path.join("vecpoints", "*.zip"))
             checkpoint_files.sort(key=os.path.getctime, reverse=True)  # Sort by creation time
 
         update_checkpoint_list()

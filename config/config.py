@@ -12,12 +12,12 @@ BUFFER_CAP = 10000
 
 # Hyperparameters
 TRAIN_INTERVAL = 128
-UPH_COST_WEIGHT = 0.5
+UPH_COST_WEIGHT = 0.8
 CTRL_COST_WEIGHT = 0.001
 HEALTH_COST_WEIGHT = 0.001
 FEET_COST_WEIGHT = 0.2
 BALANCE_COST_WEIGHT = 2
-HEIGHT_BONUS = 4
+HEIGHT_BONUS = 8
 LEARNING_RATE = 0.0005
 
 # PPO Hyperparameters
@@ -26,6 +26,5 @@ PPO_EPOCHS = 10 # increase if training too slowly
 LOSS_COEF = 0.5 # higher = emphasis on value function, lower = emphasis on policy improvement
 ENTROPY_COEF = 0.001 # increase for more exploration
 
-MAX_EPISODE_STEPS = 512
 EARLY_TERMINATION_HEIGHT = 1
 
