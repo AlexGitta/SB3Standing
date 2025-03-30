@@ -86,7 +86,7 @@ class StandupEnv(gym.Env):
 
         done = head_height < EARLY_TERMINATION_HEIGHT
         # print raw rewards for debugging (pre normalisation)
-        if (VISUALISE):
+        if (PRINTREWARD):
             print(f"Height Reward: {height_reward}, Survival Reward: {survival_reward}, Action: {action_penalty}, Rotation Penalty : {rotation_penalty}, Reward: {reward}")
         return reward, done
     

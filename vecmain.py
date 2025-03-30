@@ -30,6 +30,7 @@ class StandupEnv(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
         self.episode_steps = 0
         self.episode_reward = 0
+        self.termination_penalty_applied = False
     
     def seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
@@ -47,10 +48,13 @@ class StandupEnv(gym.Env):
 
     def reset(self): # function to reset the environment on failure of task
         mujoco.mj_resetData(self.model, self.data)
+        self.startheight = self.data.xpos[self.model.body('head').id][2]
         #starting_pose = self.model.key_qpos[0]
         #self.data.qpos[:] = starting_pose
+        self.initial_qpos = self.data.qpos.copy()
         self.episode_steps = 0
         self.episode_reward = 0
+        self.termination_penalty_applied = False
         self.data.qvel[:] = 0
         mujoco.mj_forward(self.model, self.data)
         return self.get_state()
@@ -64,35 +68,81 @@ class StandupEnv(gym.Env):
         return next_state, reward, done, {}
 
     def calculate_reward(self):
+        #  Posture component - reward staying upright
         head_height = self.data.xpos[self.model.body('head').id][2]
-        height_reward = (head_height - EARLY_TERMINATION_HEIGHT) * HEIGHT_BONUS
-        reward = height_reward
-
-        # Survival bonus
-        survival_reward = HEALTH_COST_WEIGHT * self.episode_steps
-        reward += survival_reward
-
-        # Action penalty
-        action_penalty = np.sum(np.square(self.data.ctrl)) * CTRL_COST_WEIGHT 
-        reward -= action_penalty
-
-        # Get rotation of board
-
+        target_height = 1.63  # Optimal height
+        height_reward = -5.0 * abs(target_height - head_height)  # Negative penalty for deviation
+        
+        #  Balance component - penalize board tilting
         balance_board_id = self.model.body('balance_board').id
-        balrotation = self.data.xquat[balance_board_id]
+        board_quat = self.data.xquat[balance_board_id]
+        # Extract side-to-side and forward-backward tilt components
+        tilt_side = abs(board_quat[1]) * 10.0
+        tilt_fwd_back = abs(board_quat[2]) * 10.0
+        balance_penalty = -(tilt_side + tilt_fwd_back)
+        
+        #  Stability component - reward minimal velocities
+        com_velocity = np.linalg.norm(self.data.qvel[:3])  # Center of mass velocity
+        stability_reward = -0.5 * com_velocity
+        
+        #  Efficiency component - penalize excessive actions
+        action_penalty = CTRL_COST_WEIGHT * np.sum(np.square(self.data.ctrl))
 
-        # Penalize rotation of the balance board
-        rotation_penaltyside = abs(balrotation[1]) * BALANCE_COST_WEIGHT 
-        rotation_penaltyfwdback = abs(balrotation[2]) * BALANCE_COST_WEIGHT 
-        rotation_penalty = rotation_penaltyside + rotation_penaltyfwdback
-        reward -= rotation_penalty
+        #  Posture maintenance component - reward maintaining initial pose
+        # Focus on important joints for posture (spine, neck, limbs)
+        # We use weighted differences based on importance for posture
+        posture_diff = np.zeros(len(self.data.qpos))
+        
+        # Extract the relevant joint positions (excluding root position/orientation)
+        # Starting from index 7 to skip root position and orientation
+        joint_qpos = self.data.qpos[7:]
+        initial_joint_qpos = self.initial_qpos[7:]
+        
+       # Define indices for spine and leg joints (based on your humanoid model)
+        spine_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # Spine/back/neck joints
+        leg_indices = list(range(15, 30))  # Leg joints (femur, tibia, foot, toes)
+        all_indices = list(range(len(joint_qpos)))
 
+        # Apply weights to spine and leg joints only
+        posture_diff = np.zeros_like(joint_qpos)
+       # posture_diff[spine_indices] = 2.5 * np.abs(joint_qpos[spine_indices] - initial_joint_qpos[spine_indices])
+       # posture_diff[leg_indices] = 3.0 * np.abs(joint_qpos[leg_indices] - initial_joint_qpos[leg_indices])
+        posture_diff = 2 * np.abs(joint_qpos[all_indices] - initial_joint_qpos[all_indices])
+                
+        # Calculate total posture penalty
+        posture_penalty = -0.01 * np.sum(posture_diff)
+        
+        # Height factor that only penalizes for being below target height
+        # 1.0 if at or above target height, scales down if below
+        height_factor = min(1.0, head_height / target_height)  # Linear scaling below target height
+
+        # Scale survival reward by height factor
+        survival_reward = self.episode_steps * HEALTH_COST_WEIGHT * height_factor
+
+
+        # Add a substantial penalty for falling
+        if (head_height < EARLY_TERMINATION_HEIGHT) and not self.termination_penalty_applied:  # About to terminate
+            termination_penalty = -10.0  # Large negative value
+            self.termination_penalty_applied = True
+        else:
+            termination_penalty = 0.0
+
+                
+        # Combine all components
+      #  reward = height_reward + stability_reward + action_penalty + survival_reward
+        reward = posture_penalty + termination_penalty + survival_reward
+        
+        # Accumulate episode reward
         self.episode_reward += reward
-
+        
+        # Early termination if fallen
         done = head_height < EARLY_TERMINATION_HEIGHT
-        # print raw rewards for debugging (pre normalisation)
-        if (VISUALISE):
-            print(f"Height Reward: {height_reward}, Survival Reward: {survival_reward}, Action: {action_penalty}, Rotation Penalty : {rotation_penalty}, Reward: {reward}")
+        
+        if PRINTREWARD:
+            print(f"Height: {head_height:.2f}, Balance: {balance_penalty:.2f}, " 
+                f"Stability: {stability_reward:.2f}, Action: {action_penalty:.2f}, "
+                f"Survival: {survival_reward:.2f}, Posture: {posture_penalty:.2f}, Step: {self.episode_steps}, Total: {reward:.2f}")
+    
         return reward, done
     
 
@@ -109,7 +159,7 @@ class TensorboardCallback(BaseCallback):
         def _on_step(self) -> bool:
             # For multiple environments, we can log either the mean or individual values
             
-            # Log mean values across all environments
+            # Log values across all environments
             rewards = self.training_env.get_attr("episode_reward")
             steps = self.training_env.get_attr("episode_steps")
             
@@ -120,7 +170,6 @@ class TensorboardCallback(BaseCallback):
                 self.logger.record("episode_total_reward/mean", mean_reward)
                 self.logger.record("episode_steps/mean", mean_steps)
                 
-                # Optionally log individual env metrics
                 for i, (reward, step) in enumerate(zip(rewards, steps)):
                     if reward is not None:
                         self.logger.record(f"episode_total_reward/env_{i}", reward)
@@ -134,24 +183,18 @@ def linear_schedule(initial_value: float, final_value: float):
     
     return scheduler
     
-def exponentential_schedule(initial_value: float, final_value: float):
+def exponential_schedule(initial_value: float, final_value: float):
     def scheduler(progress_remaining: float) -> float:
-        return final_value + (initial_value - final_value) * (progress_remaining ** 4)
+        return final_value + (initial_value - final_value) * (progress_remaining ** 2)
     
     return scheduler
 
 def main():
 
     def make_env(rank, seed=0):
-        """
-        Utility function for multiprocessed env.
-        
-        :param rank: (int) index of the subprocess
-        :param seed: (int) the initial seed for RNG
-        """
         def _init():
             env = StandupEnv()
-            # Important: use a different seed for each environment
+            # Use a different seed for each environment
             env.seed(seed + rank)
             return env
         
@@ -184,28 +227,29 @@ def main():
         save_freq=SAVE_AT_STEP // 6,
         save_path='./vecpoints/',
         name_prefix='ppo_model',
+      #  save_replay_buffer=True,
+      #  save_vecnormalize=True,
         verbose=1
     )
     
     initial_lr = 0.00005
     final_lr = 0.000001
-    initial_clip = 0.3
+    initial_clip = 0.2
     final_clip = 0.01
 
     ppo_hyperparams = { # hyperparameters for PPO
-            'learning_rate': linear_schedule(initial_lr, final_lr),
-            'clip_range': 0.2,
-            'target_kl': 0.015,
+            'learning_rate':  0.00005, # linear_schedule(initial_lr, final_lr),
+            'clip_range': 0.2, #  exponential_schedule(initial_clip, final_clip),
             'n_epochs': 4,  
             'ent_coef': 0.004,  
             'vf_coef': 0.7,
             'gamma': 0.99,
             'gae_lambda': 0.95,
-            'batch_size': 8192,
-            'n_steps': 2048,
+            'batch_size': 2048,
+            'n_steps': 2048, 
             'policy_kwargs': dict(
                 net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),
-                activation_fn=torch.nn.ELU,
+                activation_fn=torch.nn.ReLU,
                 ortho_init=True,
             ),
             'normalize_advantage': True,
@@ -215,6 +259,7 @@ def main():
     if argVIS:
         env = DummyVecEnv([lambda: StandupEnv()])  # Single env for visualization
         env = VecNormalize(env, norm_obs=True, norm_reward=True)
+        model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
         input_state = InputState()
         # Initialize GLFW and create window
         glfw.init()
