@@ -21,7 +21,7 @@ import argparse
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoid3fixed.xml', 'r') as f: # Open xml file for humanoid model
+        with open('resources/humanoidnew1fixed.xml', 'r') as f: # Open xml file for humanoid model
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
@@ -72,70 +72,101 @@ class StandupEnv(gym.Env):
         if self.episode_steps == 0:
             # Apply small random force to create initial instability 
             # This improves the stochasticity of the environment and helps the agent learn to balance
-            random_force = self.np_random.uniform(-15, 15, size=3)
-            self.data.xfrc_applied[self.model.body('root').id, :3] = random_force
+            random_force = self.np_random.uniform(-10, 10, size=3)
+            self.data.xfrc_applied[self.model.body('torso').id, :3] = random_force
 
         head_height = self.data.xpos[self.model.body('head').id][2]
         
         #  Balance component - penalize board tilting
-        balance_board_id = self.model.body('balance_board').id
-        board_quat = self.data.xquat[balance_board_id]
+       # balance_board_id = self.model.body('balance_board').id
+       # board_quat = self.data.xquat[balance_board_id]
         # Extract side-to-side and forward-backward tilt components
-        tilt_side = abs(board_quat[1]) * 10.0
-        tilt_fwd_back = abs(board_quat[2]) * 10.0
-        balance_penalty = -(tilt_side + tilt_fwd_back)
+      #  tilt_side = abs(board_quat[1]) * 10.0
+       # tilt_fwd_back = abs(board_quat[2]) * 10.0
+       # balance_penalty = -(tilt_side + tilt_fwd_back)
         
         #  Stability component - reward minimal velocities
         com_velocity = np.linalg.norm(self.data.qvel[:3])  # Center of mass velocity
         stability_reward = -0.5 * com_velocity
  
-        # Extract the relevant joint positions (excluding root position/orientation)
-        # Starting from index 7 to skip root position and orientation
-        joint_qpos = self.data.qpos[7:]
-        initial_joint_qpos = self.initial_qpos[7:]      
+        joint_qpos = self.data.qpos
+        initial_joint_qpos = self.initial_qpos    
         all_indices = list(range(len(joint_qpos)))
-        posture_diff = 2 * np.abs(joint_qpos[all_indices] - initial_joint_qpos[all_indices])              
+
+        non_arm_indices = list(range(len(joint_qpos) - 6))  # Exclude the last 6 joints (arm joints)
+
+              # Calculate posture differences
+        raw_diff = np.abs(joint_qpos[non_arm_indices] - initial_joint_qpos[non_arm_indices])
+        
+        # Exponential posture penalty calculation
+        # Parameters for the exponential function
+        threshold = 0.05  # Small deviations below this are minimally penalized
+        alpha = 7.5       # Controls how quickly the penalty grows
+        scale = 0.0003     # Overall scale of the penalty
+        
+        # Apply threshold and calculate exponential penalty
+        # For differences below threshold, apply minimal penalty
+        mask_small = raw_diff < threshold
+        mask_large = ~mask_small
+        
+        # Small deviations: apply minimal linear penalty
+        small_penalty = raw_diff[mask_small] * (scale/5)
+        
+        # Large deviations: apply exponential penalty
+        normalized_diff = (raw_diff[mask_large] - threshold) / (1.0 - threshold)  # Normalize to 0-1 range
+        large_penalty = scale * (np.exp(alpha * normalized_diff) - 1)
+        
+        # Combine penalties
+        combined_penalty = np.zeros_like(raw_diff)
+        combined_penalty[mask_small] = small_penalty
+        combined_penalty[mask_large] = large_penalty
+        
         # Calculate total posture penalty
-        posture_penalty = -0.01 * np.sum(posture_diff)
+        posture_penalty = max(-1, -np.sum(combined_penalty))
 
        # Primary reward for staying alive (grows over time)
-        survival_reward = self.episode_steps * 0.002  # Basic reward that increases with survival time
+
+        survival_reward = ((self.episode_steps -15 ) * 0.001) # Basic reward that increases with survival time
 
         # Height component (positive reward when at target height, drops off as height decreases)
         height_factor = min(1.0, (head_height - EARLY_TERMINATION_HEIGHT) / (TARGET_HEIGHT - EARLY_TERMINATION_HEIGHT))
         height_reward = 1.0 * height_factor  # Scales from 0 to 1 based on height
 
         # Moderate penalty for excessive actions
-        action_penalty = -0.005 * np.sum(np.square(self.data.ctrl))
+        action_penalty = -0.0025 * np.sum(np.square(self.data.ctrl))
 
         # Strong termination penalty
         if (head_height < EARLY_TERMINATION_HEIGHT) and not self.termination_penalty_applied:
-            termination_penalty = -10.0
+            termination_penalty = -0.5
             self.termination_penalty_applied = True
         else:
             termination_penalty = 0.0
 
+        if self.episode_steps > 1000:
+            success_reward = 1.0
+            done = True
+        else:
+            success_reward = 0.0
+            # Early termination if fallen
+            done = head_height < EARLY_TERMINATION_HEIGHT
+
         # Combine components 
-        reward = survival_reward + height_reward + posture_penalty + action_penalty + termination_penalty 
-    
-        #reward = posture_penalty + termination_penalty # + survival_reward
-        
+       # reward = survival_reward + height_reward + posture_penalty + action_penalty + termination_penalty 
+        reward = posture_penalty + survival_reward + termination_penalty + success_reward
+       
         # Accumulate episode reward
         self.episode_reward += reward
         
         # Early termination if fallen
-        done = head_height < EARLY_TERMINATION_HEIGHT
+
+        
         
         if PRINTREWARD:
-            print(f"Height: {height_reward:.2f}, Balance: {balance_penalty:.2f}, " 
+            print(f"Height: {height_reward:.2f}, " 
                 f"Stability: {stability_reward:.2f}, Action: {action_penalty:.2f}, "
                 f"Survival: {survival_reward:.2f}, Posture: {posture_penalty:.2f}, Step: {self.episode_steps}, Total: {reward:.2f}")
     
         return reward, done
-    
-
-    def render(self, mode='human'):
-        pass
 
 
 class TensorboardCallback(BaseCallback):
@@ -166,21 +197,6 @@ class TensorboardCallback(BaseCallback):
                         self.logger.record(f"episode_steps/env_{i}", step)
             
             return True
-        
-
-class EntropyScheduleCallback(BaseCallback):
-    def __init__(self, initial_ent=0.004, final_ent=0.0, verbose=0):
-        super().__init__(verbose)
-        self.initial_ent = initial_ent
-        self.final_ent = final_ent
-        
-    def _on_step(self):
-        # Calculate progress (0 to 1)
-        progress_remaining = 1.0 - (self.num_timesteps / MAX_STEPS)
-        # Update entropy coefficient
-        new_ent = self.final_ent + (self.initial_ent - self.final_ent) * progress_remaining
-        self.model.ent_coef = new_ent
-        return True
 
 def linear_schedule(initial_value: float, final_value: float):
     def scheduler(progress_remaining: float) -> float:
@@ -233,34 +249,30 @@ def main():
         save_path='./vecpoints/',
         name_prefix='ppo_model',
       #  save_replay_buffer=True,
-      #  save_vecnormalize=True,
+        save_vecnormalize=True,
         verbose=1
     )
     
-    initial_lr = 0.0001
-    final_lr = 0.000001
+    initial_lr = 0.00005
+    final_lr = 0.000003
     initial_clip = 0.2
-    final_clip = 0.01
+    final_clip = 0.04
     initial_ent = 0.004
     final_ent = 0.0
 
-    ent_schedule = get_linear_fn(initial_ent, final_ent, 1.0) # linear schedule for entropy coefficient
-    clip_schedule = get_linear_fn(initial_clip, final_clip, 1.0) # linear schedule for clip range
-    lr_schedule = get_linear_fn(initial_lr, final_lr, 1.0) # linear schedule for learning rate
-
     ppo_hyperparams = { # hyperparameters for PPO
-            'learning_rate':  linear_schedule(initial_lr, final_lr), 
-            'clip_range': 0.2,
+            'learning_rate':  initial_lr, # learning rate schedule
+            'clip_range': initial_clip,
             'n_epochs': 4,  
             'ent_coef': initial_ent,  
             'vf_coef': 0.7,
             'gamma': 0.995,
             'gae_lambda': 0.95,
-            'batch_size': 1024,
-            'n_steps': 2048, 
+            'batch_size': 2048,
+            'n_steps': 3072, 
             'policy_kwargs': dict(
                 net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),
-                activation_fn=torch.nn.ReLU,
+                activation_fn=torch.nn.LeakyReLU,
                 ortho_init=True,
             ),
             'normalize_advantage': True,
@@ -371,8 +383,8 @@ def main():
                 reward_index = (reward_index + 1) % PLOT_STEPS
                 reward_min = min(reward_min, np.nanmin(reward_buffer))
                 reward_max = max(reward_max, np.nanmax(reward_buffer))
-              #  print(reward)
-                # Check episode end
+                if PRINTREWARD:
+                    print(f"Normalized Reward: ", reward)
                 if done:
                     state = env.reset()
 
@@ -464,12 +476,11 @@ def main():
         glfw.terminate()
 
     else:
-        env = SubprocVecEnv([make_env(i, seed=42) for i in range(6)])  # 6 parallel envs for training
+        env = SubprocVecEnv([make_env(i, seed=42) for i in range(8)])  # 8 parallel envs for training
         env = VecNormalize(env, norm_obs=True, norm_reward=True) #  normalize environment (rewards between fixed range)
         log_path = "./tensorboard/"
         model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams, tensorboard_log=log_path)
         tensorboard_callback = TensorboardCallback()
-      #  ent_callback = EntropyScheduleCallback(initial_ent=initial_ent, final_ent=final_ent)
         model.learn(total_timesteps=MAX_STEPS, callback=[checkpoint_callback, tensorboard_callback])
         env.save("vec_normalize.pkl")
 
