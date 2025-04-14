@@ -28,6 +28,7 @@ class StandupEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
+        print(f"Observation space: {self.observation_space.shape}, Action space: {self.action_space.shape}")
         self.episode_steps = 0
         self.episode_reward = 0
         self.termination_penalty_applied = False
@@ -40,8 +41,8 @@ class StandupEnv(gym.Env):
         return np.concatenate([
             self.data.qpos.flat,  
             self.data.qvel.flat,
-            self.data.cinert.flat,
-            self.data.cvel.flat,
+           # self.data.cinert.flat,
+           # self.data.cvel.flat,
             self.data.qfrc_actuator.flat,
             self.data.cfrc_ext.flat,
         ])
@@ -96,12 +97,12 @@ class StandupEnv(gym.Env):
         non_arm_indices = list(range(len(joint_qpos) - 6))  # Exclude the last 6 joints (arm joints)
 
               # Calculate posture differences
-        raw_diff = np.abs(joint_qpos[non_arm_indices] - initial_joint_qpos[non_arm_indices])
+        raw_diff = np.abs(joint_qpos[all_indices] - initial_joint_qpos[all_indices])
         
         # Exponential posture penalty calculation
         # Parameters for the exponential function
-        threshold = 0.05  # Small deviations below this are minimally penalized
-        alpha = 7.5       # Controls how quickly the penalty grows
+        threshold = 0.025  # Small deviations below this are minimally penalized
+        alpha = 10      # Controls how quickly the penalty grows
         scale = 0.0003     # Overall scale of the penalty
         
         # Apply threshold and calculate exponential penalty
@@ -152,7 +153,8 @@ class StandupEnv(gym.Env):
 
         # Combine components 
        # reward = survival_reward + height_reward + posture_penalty + action_penalty + termination_penalty 
-        reward = posture_penalty + survival_reward + termination_penalty + success_reward
+        #reward = posture_penalty + survival_reward + termination_penalty + success_reward
+        reward = posture_penalty + survival_reward + termination_penalty
        
         # Accumulate episode reward
         self.episode_reward += reward
