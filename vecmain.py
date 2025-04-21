@@ -5,13 +5,12 @@ import numpy as np
 import imgui
 import torch 
 from imgui.integrations.glfw import GlfwRenderer
-import matplotlib.pyplot as plt
 import glob
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
-from stable_baselines3.common.utils import set_random_seed, get_linear_fn
+from stable_baselines3.common.utils import set_random_seed
 from config.config import *
 from environment.camera import InputState, center_camera_on_humanoid
 import gym
@@ -21,14 +20,13 @@ import argparse
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidnew1fixed.xml', 'r') as f: # Open xml file for humanoid model
+        with open('resources/humanoidnew1.xml', 'r') as f: # Open xml file for humanoid model
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
-        print(f"Observation space: {self.observation_space.shape}, Action space: {self.action_space.shape}")
         self.episode_steps = 0
         self.episode_reward = 0
         self.termination_penalty_applied = False
@@ -41,8 +39,6 @@ class StandupEnv(gym.Env):
         return np.concatenate([
             self.data.qpos.flat,  
             self.data.qvel.flat,
-           # self.data.cinert.flat,
-           # self.data.cvel.flat,
             self.data.qfrc_actuator.flat,
             self.data.cfrc_ext.flat,
         ])
@@ -50,8 +46,6 @@ class StandupEnv(gym.Env):
     def reset(self): # function to reset the environment on failure of task
         mujoco.mj_resetData(self.model, self.data)
         self.startheight = self.data.xpos[self.model.body('head').id][2]
-        #starting_pose = self.model.key_qpos[0]
-        #self.data.qpos[:] = starting_pose
         self.initial_qpos = self.data.qpos.copy()
         self.episode_steps = 0
         self.episode_reward = 0
@@ -70,103 +64,62 @@ class StandupEnv(gym.Env):
 
     def calculate_reward(self):
 
-        if self.episode_steps == 0:
-            # Apply small random force to create initial instability 
-            # This improves the stochasticity of the environment and helps the agent learn to balance
-            random_force = self.np_random.uniform(-10, 10, size=3)
-            self.data.xfrc_applied[self.model.body('torso').id, :3] = random_force
-
+        # Get current state
         head_height = self.data.xpos[self.model.body('head').id][2]
+        balance_board_id = self.model.body('balance_board').id
+        board_quat = self.data.xquat[balance_board_id]
+        tilt_side = abs(board_quat[1])
+        tilt_fwd_back = abs(board_quat[2])
+        total_tilt = tilt_side + tilt_fwd_back
         
-        #  Balance component - penalize board tilting
-       # balance_board_id = self.model.body('balance_board').id
-       # board_quat = self.data.xquat[balance_board_id]
-        # Extract side-to-side and forward-backward tilt components
-      #  tilt_side = abs(board_quat[1]) * 10.0
-       # tilt_fwd_back = abs(board_quat[2]) * 10.0
-       # balance_penalty = -(tilt_side + tilt_fwd_back)
-        
-        #  Stability component - reward minimal velocities
-        com_velocity = np.linalg.norm(self.data.qvel[:3])  # Center of mass velocity
-        stability_reward = -0.5 * com_velocity
- 
-        joint_qpos = self.data.qpos
-        initial_joint_qpos = self.initial_qpos    
-        all_indices = list(range(len(joint_qpos)))
+        #  Board component - penalize board tilting
+        if total_tilt < TILT_THRESHOLD:
+            # Minimal linear penalty for small tilts
+            balance_penalty = -total_tilt * (TILT_SCALE * TILT_PENALTY_SCALE_LOW)
+        else:
+            # Exponential penalty for larger tilts
+            normalized_tilt = (total_tilt - TILT_THRESHOLD) / (1.0 - TILT_THRESHOLD)
+            balance_penalty = -TILT_SCALE * (TILT_PENALTY_SCALE_LOW * TILT_THRESHOLD + (np.exp(TILT_ALPHA * normalized_tilt) - 1))
 
-        non_arm_indices = list(range(len(joint_qpos) - 6))  # Exclude the last 6 joints (arm joints)
+        # Survival reward for staying alive (grows over time, offset by 15 so agent isnt rewarded positvely immediately)
+        survival_reward = (self.episode_steps - SURVIVAL_START_STEP) * SURVIVAL_REWARD_RATE # Basic reward that increases with survival time
 
-              # Calculate posture differences
-        raw_diff = np.abs(joint_qpos[all_indices] - initial_joint_qpos[all_indices])
-        
-        # Exponential posture penalty calculation
-        # Parameters for the exponential function
-        threshold = 0.025  # Small deviations below this are minimally penalized
-        alpha = 10      # Controls how quickly the penalty grows
-        scale = 0.0003     # Overall scale of the penalty
-        
-        # Apply threshold and calculate exponential penalty
-        # For differences below threshold, apply minimal penalty
-        mask_small = raw_diff < threshold
-        mask_large = ~mask_small
-        
-        # Small deviations: apply minimal linear penalty
-        small_penalty = raw_diff[mask_small] * (scale/5)
-        
-        # Large deviations: apply exponential penalty
-        normalized_diff = (raw_diff[mask_large] - threshold) / (1.0 - threshold)  # Normalize to 0-1 range
-        large_penalty = scale * (np.exp(alpha * normalized_diff) - 1)
-        
-        # Combine penalties
-        combined_penalty = np.zeros_like(raw_diff)
-        combined_penalty[mask_small] = small_penalty
-        combined_penalty[mask_large] = large_penalty
-        
-        # Calculate total posture penalty
-        posture_penalty = max(-1, -np.sum(combined_penalty))
-
-       # Primary reward for staying alive (grows over time)
-
-        survival_reward = ((self.episode_steps -15 ) * 0.001) # Basic reward that increases with survival time
-
-        # Height component (positive reward when at target height, drops off as height decreases)
+        # Height reward based on head height (0.5 when at/above target height, minmum of -1 when below)
         height_factor = min(1.0, (head_height - EARLY_TERMINATION_HEIGHT) / (TARGET_HEIGHT - EARLY_TERMINATION_HEIGHT))
-        height_reward = 1.0 * height_factor  # Scales from 0 to 1 based on height
+        height_reward = max(-1,height_factor - 0.5) 
 
-        # Moderate penalty for excessive actions
-        action_penalty = -0.0025 * np.sum(np.square(self.data.ctrl))
+        # Moderate penalty for excessive actions, using quadratic control cost
+        action_penalty = -ACTION_PENALTY_SCALE * np.sum(np.square(self.data.ctrl))
 
-        # Strong termination penalty
-        if (head_height < EARLY_TERMINATION_HEIGHT) and not self.termination_penalty_applied:
-            termination_penalty = -0.5
+        # Logic for termination due to falling/ board touching ground, or success (1000 steps reached)
+        if ((head_height < EARLY_TERMINATION_HEIGHT) or tilt_side > MAX_TILT_TERMINATION) and not self.termination_penalty_applied:
+            # Penalty for early termination
+            termination_penalty = EARLY_TERMINATION_PENALTY
             self.termination_penalty_applied = True
         else:
             termination_penalty = 0.0
 
-        if self.episode_steps > 1000:
-            success_reward = 1.0
+        if self.episode_steps > SUCCESS_STEPS:
+            # Reward for successful completion
+            success_reward = SUCCESS_REWARD
             done = True
         else:
             success_reward = 0.0
-            # Early termination if fallen
-            done = head_height < EARLY_TERMINATION_HEIGHT
+
+            # Early termination if fallen or balance board touches ground
+            done = ((head_height < EARLY_TERMINATION_HEIGHT) or tilt_side > MAX_TILT_TERMINATION)
 
         # Combine components 
-       # reward = survival_reward + height_reward + posture_penalty + action_penalty + termination_penalty 
-        #reward = posture_penalty + survival_reward + termination_penalty + success_reward
-        reward = posture_penalty + survival_reward + termination_penalty
-       
+        reward = survival_reward + termination_penalty + success_reward + balance_penalty + action_penalty + height_reward
+        
         # Accumulate episode reward
         self.episode_reward += reward
-        
-        # Early termination if fallen
 
-        
-        
+        # Reward inspection output
         if PRINTREWARD:
             print(f"Height: {height_reward:.2f}, " 
-                f"Stability: {stability_reward:.2f}, Action: {action_penalty:.2f}, "
-                f"Survival: {survival_reward:.2f}, Posture: {posture_penalty:.2f}, Step: {self.episode_steps}, Total: {reward:.2f}")
+                f"Balance: {balance_penalty:.2f}, Action: {action_penalty:.2f}, "
+                f"Survival: {survival_reward:.2f}, Step: {self.episode_steps}, Total: {reward:.2f}")
     
         return reward, done
 
@@ -178,7 +131,7 @@ class TensorboardCallback(BaseCallback):
             super(TensorboardCallback, self).__init__(verbose)
 
         def _on_step(self) -> bool:
-            # For multiple environments, we can log either the mean or individual values
+            # For multiple environments, we log both the mean and individual values
             
             # Log values across all environments
             rewards = self.training_env.get_attr("episode_reward")
@@ -205,12 +158,6 @@ def linear_schedule(initial_value: float, final_value: float):
         return final_value + (initial_value - final_value) * (progress_remaining)
     
     return scheduler
-    
-def exponential_schedule(initial_value: float, final_value: float):
-    def scheduler(progress_remaining: float) -> float:
-        return final_value + (initial_value - final_value) * (progress_remaining ** 2)
-    
-    return scheduler
 
 def main():
 
@@ -228,45 +175,48 @@ def main():
     parser.add_argument('--visualise', action='store_true', help='Enable visualisation')
     parser.add_argument('--startpaused', action='store_true', help='Start paused')
     parser.add_argument('--checkpoint', type=int, default=1, help='Checkpoint (1-3)')
+
+    # Commented out command-line hyperparameters, can be used  for rapid testing / hyperparameter tuning
+    """
     parser.add_argument('--learning_rate', type=float, default=LEARNING_RATE, help='Learning rate')
     parser.add_argument('--clip_param', type=float, default=CLIP_PARAM, help='Clip parameter')
     parser.add_argument('--ppo_epochs', type=int, default=PPO_EPOCHS, help='PPO epochs')
     parser.add_argument('--ent_coef', type=float, default=ENTROPY_COEF, help='Entropy coefficient')
     parser.add_argument('--vf_coef', type=float, default=LOSS_COEF, help='Value function coefficient')
+    """
+
     args = parser.parse_args()
 
     argVIS = args.visualise
     argSP = args.startpaused
     argCheck = args.checkpoint
+
+    """
     argLR = args.learning_rate
     argCP = args.clip_param
     argEPOCH = args.ppo_epochs
     argENTCOEF = args.ent_coef
     argLOCOEF = args.vf_coef
+    """
 
     os.makedirs('./vecpoints/', exist_ok=True)
 
     checkpoint_callback = CheckpointCallback(
-        save_freq=SAVE_AT_STEP // 6,
+        save_freq=SAVE_AT_STEP // 8,
         save_path='./vecpoints/',
         name_prefix='ppo_model',
-      #  save_replay_buffer=True,
         save_vecnormalize=True,
         verbose=1
     )
     
-    initial_lr = 0.00005
+    initial_lr = 0.00006
     final_lr = 0.000003
-    initial_clip = 0.2
-    final_clip = 0.04
-    initial_ent = 0.004
-    final_ent = 0.0
 
     ppo_hyperparams = { # hyperparameters for PPO
-            'learning_rate':  initial_lr, # learning rate schedule
-            'clip_range': initial_clip,
+            'learning_rate':  linear_schedule(initial_lr, final_lr), # learning rate schedule
+            'clip_range': 0.2,
             'n_epochs': 4,  
-            'ent_coef': initial_ent,  
+            'ent_coef': 0.002,  
             'vf_coef': 0.7,
             'gamma': 0.995,
             'gae_lambda': 0.95,
@@ -274,14 +224,15 @@ def main():
             'n_steps': 3072, 
             'policy_kwargs': dict(
                 net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),
-                activation_fn=torch.nn.LeakyReLU,
+                activation_fn=torch.nn.ReLU,
                 ortho_init=True,
             ),
             'normalize_advantage': True,
-            'max_grad_norm': 0.3,
+            'max_grad_norm': 0.2,
     }
 
     if argVIS:
+        # Visualisation mode
         env = DummyVecEnv([lambda: StandupEnv()])  # Single env for visualization
         env = VecNormalize(env, norm_obs=True, norm_reward=True)
         model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
@@ -292,16 +243,16 @@ def main():
         glfw.make_context_current(window)
         glfw.swap_interval(1)
 
-        # Setup scene with original camera setup
+        # Setup scene
         camera = mujoco.MjvCamera()
         option = mujoco.MjvOption()
         scene = mujoco.MjvScene(env.get_attr('model')[0], maxgeom=100000)
         context = mujoco.MjrContext(env.get_attr('model')[0], mujoco.mjtFontScale.mjFONTSCALE_150)
 
-        # Set default camera and options with adjusted angle
+        # Set default camera and options
         mujoco.mjv_defaultCamera(camera)
         camera.distance = 6.0
-        camera.azimuth = 90
+        camera.azimuth = 180
         camera.elevation = -15
         mujoco.mjv_defaultOption(option)
 
@@ -371,7 +322,6 @@ def main():
 
         update_checkpoint_list()
 
-        reward_buffer = np.full(PLOT_STEPS, np.nan, dtype=np.float32)
         reward_index = 0
         reward_min = float('0')
         reward_max = float('0')
@@ -381,25 +331,12 @@ def main():
                 # Get action from policy
                 action, _ = model.predict(state)
                 state, reward, done, _ = env.step(action)
-                reward_buffer[reward_index] = reward
-                reward_index = (reward_index + 1) % PLOT_STEPS
-                reward_min = min(reward_min, np.nanmin(reward_buffer))
-                reward_max = max(reward_max, np.nanmax(reward_buffer))
                 if PRINTREWARD:
                     print(f"Normalized Reward: ", reward)
                 if done:
                     state = env.reset()
 
             center_camera_on_humanoid(camera, env.get_attr('data')[0], env.get_attr('model')[0])
-            # Check tilt_status.txt file to see if we should unpause
-            try:
-                with open("tilt_status.txt", "r") as f:
-                    status = f.read().strip()
-                    if status == "running" and paused:
-                        print("Unpausing simulation due to board tilt")
-                        paused = False
-            except Exception as e:
-                print(f"Error reading status file: {e}")
                 
             # Start ImGui frame
             impl.process_inputs()
@@ -423,19 +360,6 @@ def main():
             imgui.text("Press Space key to pause/unpause")
             imgui.end()
 
-            imgui.set_next_window_position(10, 500, imgui.ONCE)
-            imgui.begin("Reward History", True)
-            imgui.set_window_size(300, 200, imgui.FIRST_USE_EVER)
-
-            # Plot the rewards
-            if len(reward_buffer) > 1:
-                imgui.plot_lines("##rewards",
-                                 reward_buffer,
-                                 graph_size=(285, 150),
-                                 scale_min=reward_min,
-                                 scale_max=reward_max)
-                imgui.text(f"Min: {reward_min:.2f} Max: {reward_max:.2f}")
-            imgui.end()
 
             if imgui.button("Refresh List"):
                 update_checkpoint_list()
@@ -478,6 +402,7 @@ def main():
         glfw.terminate()
 
     else:
+        # Headless training mode
         env = SubprocVecEnv([make_env(i, seed=42) for i in range(8)])  # 8 parallel envs for training
         env = VecNormalize(env, norm_obs=True, norm_reward=True) #  normalize environment (rewards between fixed range)
         log_path = "./tensorboard/"

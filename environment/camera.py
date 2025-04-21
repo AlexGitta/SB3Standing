@@ -5,7 +5,7 @@ import numpy as np
 
 def center_camera_on_humanoid(camera, data, model):
     # Get torso position
-    torso_pos = data.xpos[model.body('root').id]
+    torso_pos = data.xpos[model.body('torso').id]
     
     # Update camera lookat to track torso
     camera.lookat[0] = torso_pos[0]  # x
