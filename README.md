@@ -1,5 +1,5 @@
 # SB3Standing
-Standing (balance board) program implemented with Stable Baselines 3
+Standing (balance board) program implemented with Stable Baselines 3. This is the exhibition version of the project, with code that enables a user to compete with the agent via an MPU6050 Gyro mounted to a physical balance board. The user can also select checkpoints using 3 buttons. All data is sent through an Arduino via serial.
 
 
 
@@ -21,11 +21,11 @@ Stable Baselines 3 2.5.0
 OpenAI Gym 0.26.2  
 TensorBoard 2.19.0  
 
-To train an agent, run
+To run the simulation, run
 `python vecmain.py`  
-To configure the total number of steps to train for, how often to save a checkpoint and other parameters, edit `config.py`.  
-To visualise the environment, run
-`python vecmain.py --visualise`  
-Use `--startpaused`to start the environment paused.  
-Once you have trained an agent, open the visualisation window, select a checkpoint and unpause the simulation to see the results of the agent's learned policy.  
+To use the Arduino functionality, connect your Arduino UNO, mpu6050 and 3 buttons via serial and run `arduinocode.ino` on the Arduino.   
+Then run `arduinoreciever.py` in order to visualise the gyroscope pitch reading, as well as change the loaded checkpoint using the buttons.  
+
 Use space to pause/unpause, and ALT + mouse to move the camera.
+
+Please note, if you want to use this version of the project, you will need the main version of the project in order to train agents headlessly.
