@@ -1,5 +1,5 @@
 # SB3Standing
-Standing (balance board) program implemented with Stable Baselines 3
+Standing (balance board) program implemented with Stable Baselines 3. This is the version dedicated to training and visualising agents. If you would like to see the code designed for an exhibition setup, with a gyroscope and buttons communicating via serial, it is in a seperate branch called exhibition.
 
 
 
