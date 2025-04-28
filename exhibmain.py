@@ -1,3 +1,15 @@
+# PPO implementation for a humanoid balancing on a balance board
+# using the MuJoCo physics engine and Stable Baselines3 library.
+# The humanoid is trained to stand up and balance on the board, with various rewards and penalties applied based on its performance.
+# The code includes a custom environment, a PPO agent, and a GUI for visualisation and interaction.
+# This code is designed to work with an Arduino board with a serial connection to the computer.
+# The Arduino code is not included in this snippet, but it is assumed to be running and sending data to the computer.
+# It can be found in the "Arduino" folder of the repository branched under "exhibition".
+# The Arduino setup consists of an MPU6050 gyroscope, and 3 buttons to select different checkpoints.
+# The Arduino code changes the contents of a text file to indicate which checkpoint to load.
+# This is the version of the code designed for exhibition. For the training version, see the branch tagged "main".
+# By Alex Evans
+
 import mujoco
 import os
 import glfw
@@ -27,26 +39,26 @@ class StandupEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
-        self.episode_steps = 0
+        self.episode_steps = 0 # Set basic tracking variables
         self.episode_reward = 0
         self.termination_penalty_applied = False
         self.apply_random_force = False
     
-    def seed(self, seed=None):
+    def seed(self, seed=None): # Function to set a random initial set of values for an environment
         self.np_random, seed = gym.utils.seeding.np_random(seed)
         return [seed]
 
     def get_state(self): # function to return current state of simulation environment
         return np.concatenate([
-            self.data.qpos.flat,  
-            self.data.qvel.flat,
-            self.data.qfrc_actuator.flat,
-            self.data.cfrc_ext.flat,
+            self.data.qpos.flat,  # Relative joint positions
+            self.data.qvel.flat,  # Relative joint velocities
+            self.data.qfrc_actuator.flat, # Actuator forces
+            self.data.cfrc_ext.flat,   # External forces
         ])
 
     def reset(self): # function to reset the environment on failure of task
         mujoco.mj_resetData(self.model, self.data)
-        self.startheight = self.data.xpos[self.model.body('head').id][2]
+        self.startheight = self.data.xpos[self.model.body('head').id][2] # Tracking variables
         self.initial_qpos = self.data.qpos.copy()
         self.episode_steps = 0
         self.episode_reward = 0
@@ -61,11 +73,11 @@ class StandupEnv(gym.Env):
             print("Applying random force to torso")
             self.apply_force_to_torso()
             self.apply_random_force = False  # reset flag after applying
-        mujoco.mj_step(self.model, self.data)
+        mujoco.mj_step(self.model, self.data) # Step the simulation
         
-        next_state = self.get_state()
-        reward, done = self.calculate_reward()
-        self.episode_steps += 1
+        next_state = self.get_state() # Get the state after step
+        reward, done = self.calculate_reward() # Get reward
+        self.episode_steps += 1 
         return next_state, reward, done, {}
 
     def apply_force_to_torso(self): # apply a random force to the torso body
@@ -76,13 +88,13 @@ class StandupEnv(gym.Env):
 
     def calculate_reward(self):
 
-        # Get current state
-        head_height = self.data.xpos[self.model.body('head').id][2]
+        # Get current state  of various elements of the humanoid
+        head_height = self.data.xpos[self.model.body('head').id][2] # Head height
         balance_board_id = self.model.body('balance_board').id
         board_quat = self.data.xquat[balance_board_id]
         tilt_side = abs(board_quat[1])
         tilt_fwd_back = abs(board_quat[2])
-        total_tilt = tilt_side + tilt_fwd_back
+        total_tilt = tilt_side + tilt_fwd_back # Balance board rotation, combining two elements of the boards quaternion
         
         #  Board component - penalize board tilting
         if total_tilt < TILT_THRESHOLD:
@@ -151,22 +163,22 @@ class TensorboardCallback(BaseCallback):
 
             
             if len(rewards) > 0:
-                mean_reward = np.mean([r for r in rewards if r is not None])
+                mean_reward = np.mean([r for r in rewards if r is not None]) 
                 mean_steps = np.mean([s for s in steps if s is not None])
                 
                 
-                self.logger.record("episode_total_reward/mean", mean_reward)
+                self.logger.record("episode_total_reward/mean", mean_reward)  # Log mean metrics
                 self.logger.record("episode_steps/mean", mean_steps)
                 
                 for i, (reward, step) in enumerate(zip(rewards, steps)):
                     if reward is not None:
-                        self.logger.record(f"episode_total_reward/env_{i}", reward)
+                        self.logger.record(f"episode_total_reward/env_{i}", reward)  # Log metrics for each environment individually
                         self.logger.record(f"episode_steps/env_{i}", step)
             
             return True
 
-def linear_schedule(initial_value: float, final_value: float):
-    def scheduler(progress_remaining: float) -> float:
+def linear_schedule(initial_value: float, final_value: float):  # Function to decrease a value linearly from x to y, using the progress left in the simulation
+    def scheduler(progress_remaining: float) -> float: # Takes progress remaining as an argument, passed by the simulation
         return final_value + (initial_value - final_value) * (progress_remaining)
     
     return scheduler
@@ -174,16 +186,16 @@ def linear_schedule(initial_value: float, final_value: float):
 def get_checkpoint_from_file(filename="checkpoint.txt"): # function to get checkpoint name from file, changed by arduino code
     if os.path.exists(filename):
         with open(filename, "r") as f:
-            checkpoint_name = f.read().strip()
+            checkpoint_name = f.read().strip() # Find filename in text file
             if checkpoint_name:
                 checkpoint_path = os.path.join("vecpoints", checkpoint_name)
                 if os.path.exists(checkpoint_path):
-                    return checkpoint_path
+                    return checkpoint_path # Return filepath of checkpoint if it exists
     return None
 
 def main():
 
-    def make_env(rank, seed=0):
+    def make_env(rank, seed=0): # Function to make environments
         def _init():
             env = StandupEnv()
             # Use a different seed for each environment
@@ -194,13 +206,13 @@ def main():
         return _init
 
 
-    os.makedirs('./vecpoints/', exist_ok=True)
+    os.makedirs('./vecpoints/', exist_ok=True)  # Set up checkpoints directory
 
-    checkpoint_callback = CheckpointCallback(
-        save_freq=SAVE_AT_STEP // 8,
+    checkpoint_callback = CheckpointCallback(   # Create callback to save checkpoints
+        save_freq=SAVE_AT_STEP // 8,    # Divide by no. of environments
         save_path='./vecpoints/',
         name_prefix='ppo_model',
-        save_vecnormalize=True,
+        save_vecnormalize=True, # Save the vec normalisation
         verbose=1
     )
     
@@ -208,41 +220,41 @@ def main():
     final_lr = 0.000001
 
     ppo_hyperparams = { # hyperparameters for PPO
-            'learning_rate': 0.00003, # linear_schedule(initial_lr, final_lr), # learning rate schedule
+            'learning_rate': 0.00003, # linear_schedule(initial_lr, final_lr), # learning rate schedule not used in this version (exhibition)
             'clip_range': 0.2,
-            'n_epochs': 4,  
-            'ent_coef': 0.00001,  
-            'vf_coef': 0.7,
-            'gamma': 0.995,
-            'gae_lambda': 0.95,
+            'n_epochs': 4,  # Epochs per mini batch
+            'ent_coef': 0.00001,    # Coefficient for entropy loss
+            'vf_coef': 0.7, # Value function coefficient
+            'gamma': 0.995, # Discount Factor
+            'gae_lambda': 0.95, # For generalised advantage estimation ( how much we value future advantage)
             'batch_size': 2048,
-            'n_steps': 3072, 
+            'n_steps': 3072,  # 3072 * no_envs is steps per update
             'policy_kwargs': dict(
-                net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]),
-                activation_fn=torch.nn.ReLU,
+                net_arch=dict(pi=[256, 128, 64], vf=[256, 128, 64]), # Set neural net architectures, one for actor one for critic
+                activation_fn=torch.nn.ReLU, # ReLu activation
                 ortho_init=True,
             ),
             'normalize_advantage': True,
-            'max_grad_norm': 0.2,
-            'target_kl': 0.008,
+            'max_grad_norm': 0.2, # Gradient clipping
+            'target_kl': 0.008, # Target KL divergence (Increased determinism for exhibition)
     }
 
     
         # Visualisation mode
     env = DummyVecEnv([lambda: StandupEnv()])  # Single env for visualization
-    env = VecNormalize(env, norm_obs=True, norm_reward=True)
-    model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams)
-    input_state = InputState()
+    env = VecNormalize(env, norm_obs=True, norm_reward=True)  # Normalize environment (rewards between fixed range)
+    model = PPO('MlpPolicy', env, verbose=1, **ppo_hyperparams) # Load model with hyperparameters
+    input_state = InputState() # Initialize input state for camera control
     # Initialize GLFW and create window
     glfw.init()
-    window = glfw.create_window(1200, 900, "Standup Task", None, None)
+    window = glfw.create_window(1200, 900, "Standup Task", None, None) # Create window for rendering
     glfw.make_context_current(window)
     glfw.swap_interval(1)
 
     # Setup scene
-    camera = mujoco.MjvCamera()
+    camera = mujoco.MjvCamera() # Initialize camera 
     option = mujoco.MjvOption()
-    scene = mujoco.MjvScene(env.get_attr('model')[0], maxgeom=100000)
+    scene = mujoco.MjvScene(env.get_attr('model')[0], maxgeom=100000) # Initialize scene
     context = mujoco.MjrContext(env.get_attr('model')[0], mujoco.mjtFontScale.mjFONTSCALE_150)
 
     # Set default camera and options
@@ -261,12 +273,12 @@ def main():
     # Track last loaded checkpoint
     last_checkpoint_path = None
 
-    def handle_input(window, input_state, camera):
-        def mouse_button_callback(window, button, action, mods):
+    def handle_input(window, input_state, camera):  # Function to handle input for camera control and other settings
+        def mouse_button_callback(window, button, action, mods): # Mouse button callback for camera control
             if button == glfw.MOUSE_BUTTON_LEFT:
                 input_state.left_down = action == glfw.PRESS
                 if input_state.left_down:
-                    input_state.last_x, input_state.last_y = glfw.get_cursor_pos(window)
+                    input_state.last_x, input_state.last_y = glfw.get_cursor_pos(window) # Get initial mouse position 
             elif button == glfw.MOUSE_BUTTON_RIGHT:
                 input_state.right_down = action == glfw.PRESS
 
@@ -274,98 +286,114 @@ def main():
             input_state.mouse_x = xpos
             input_state.mouse_y = ypos
 
-            if input_state.left_down and input_state.camera_mode:
-                dx = xpos - input_state.last_x
+            if input_state.left_down and input_state.camera_mode:   # Check if Alt key is pressed and mouse is down
+                dx = xpos - input_state.last_x # Get change in mouse position
                 dy = ypos - input_state.last_y
                 camera.azimuth += dx * 0.5
-                camera.elevation = np.clip(camera.elevation - dy * 0.5, -90, 90)
+                camera.elevation = np.clip(camera.elevation - dy * 0.5, -90, 90) # Update camera azimuth and elevation
                 input_state.last_x = xpos
                 input_state.last_y = ypos
 
-        def keyboard_callback(window, key, scancode, action, mods):
+        def keyboard_callback(window, key, scancode, action, mods): # Keyboard callback for various actions
             nonlocal paused
-            if action == glfw.PRESS:
-                if key == glfw.KEY_ESCAPE:
-                    glfw.set_window_should_close(window, True)
-                elif key == glfw.KEY_SPACE:
+            if action == glfw.PRESS: 
+                if key == glfw.KEY_ESCAPE: # Escape key to exit
+                   glfw.set_window_should_close(window, True)
+                elif key == glfw.KEY_SPACE: # Space key to pause/unpause simulation
                     paused = not paused
-                elif key == glfw.KEY_F: # Set the flag in the environment to apply force
+                elif key == glfw.KEY_F: # F key to apply random force to torso
                     real_env = env.venv.envs[0]
-                    while hasattr(real_env, "env"):
+                    while hasattr(real_env, "env"): 
                         real_env = real_env.env
                     real_env.apply_random_force = True
             # Track Alt key for camera mode
             input_state.camera_mode = (mods & glfw.MOD_ALT)
 
             # Camera azimuth control
-            if key in [glfw.KEY_LEFT, glfw.KEY_RIGHT]:
+            if key in [glfw.KEY_LEFT, glfw.KEY_RIGHT]: # Left/Right arrow keys to rotate camera
                 if action == glfw.PRESS or action == glfw.REPEAT:
                     if key == glfw.KEY_LEFT:
                         camera.azimuth = (camera.azimuth + 2) % 360
                     elif key == glfw.KEY_RIGHT:
                         camera.azimuth = (camera.azimuth - 2) % 360
 
-        glfw.set_mouse_button_callback(window, mouse_button_callback)
-        glfw.set_cursor_pos_callback(window, mouse_move_callback)
-        glfw.set_key_callback(window, keyboard_callback)
+        glfw.set_mouse_button_callback(window, mouse_button_callback) # Set mouse button callback
+        glfw.set_cursor_pos_callback(window, mouse_move_callback) # Set mouse move callback
+        glfw.set_key_callback(window, keyboard_callback) # Set keyboard callback
 
     # Initialize ImGui
-    imgui.create_context()
-    impl = GlfwRenderer(window)
-    handle_input(window, input_state, camera)
+    imgui.create_context() 
+    impl = GlfwRenderer(window) # Initialize ImGui renderer
+    handle_input(window, input_state, camera) # Set input handling for camera control / other settings
 
     # Add checkpoint list state
-    checkpoint_files = []
-    selected_checkpoint = -1
+    checkpoint_files = [] # List of checkpoint files
+    selected_checkpoint = -1 # Selected checkpoint index
 
-    def update_checkpoint_list():
+    def update_checkpoint_list(): # Function to update the checkpoint list
         nonlocal checkpoint_files
-        checkpoint_files = glob.glob(os.path.join("vecpoints", "*.zip"))
+        checkpoint_files = glob.glob(os.path.join("vecpoints", "*.zip")) # Get all checkpoint files
         checkpoint_files.sort(key=os.path.getctime, reverse=True)  # Sort by creation time
 
     update_checkpoint_list()
 
-    reward_index = 0
-    reward_min = float('0')
-    reward_max = float('0')
-
-    while not glfw.window_should_close(window):
+    while not glfw.window_should_close(window): # Main loop for rendering and simulation, as well as checking for arduino input
         # Check for checkpoint update
         checkpoint_path = get_checkpoint_from_file()
         if checkpoint_path and checkpoint_path != last_checkpoint_path:
             try:
-                model = PPO.load(checkpoint_path, env=env)
-                print(f"Loaded new checkpoint: {checkpoint_path}")
-                state = env.reset()
-                last_checkpoint_path = checkpoint_path
+                  # Load the new checkpoint
+                    print(f"Loading checkpoint: {checkpoint_path}")
+                    env = DummyVecEnv([lambda: StandupEnv()])  # Single env for visualization
+                    env = VecNormalize(env, norm_obs=True, norm_reward=True)
+                    
+                    # Load the model
+                    model = PPO.load(checkpoint_path, env=env)
+                    
+                    # Try to load matching VecNormalize stats file
+                    norm_path = checkpoint_path.replace('.zip', '') + '_vecnormalize.pkl'
+                    if os.path.exists(norm_path):
+                        # Load saved normalization stats
+                        env = VecNormalize.load(norm_path, env)
+                        # This ensures the loaded env knows which environment it's wrapping
+                        env.training = False  # Set to False for evaluation
+                        model.set_env(env)
+                        print(f"Loaded normalization stats from: {norm_path}")
+                        
+                    # Reset environment and update last checkpoint path
+                    state = env.reset()
+                    last_checkpoint_path = checkpoint_path 
+                    print(f"Successfully loaded checkpoint and updated reference")
+         
             except Exception as e:
                 print(f"Failed to load checkpoint {checkpoint_path}: {e}")
 
         if not paused:
             # Get action from policy
-            if TEMPERATURE == 1.0:
+            if TEMPERATURE == 1.0: # If temperature is 1, use normal action
                 action, _ = model.predict(state, deterministic=False)
             else:
                 obs_tensor = torch.as_tensor(state, device=model.device)
                 with torch.no_grad():
                     features = model.policy.extract_features(obs_tensor)
                     latent_pi, _ = model.policy.mlp_extractor(features)
-                    dist = model.policy._get_action_dist_from_latent(latent_pi)
-                    mean = dist.distribution.mean.cpu().numpy()
+                    dist = model.policy._get_action_dist_from_latent(latent_pi) # Get dsitribution from latent pi
+                    mean = dist.distribution.mean.cpu().numpy() # Get mean  and std from distribution
                     std = dist.distribution.stddev.cpu().numpy()
-                action = np.random.normal(mean, std * TEMPERATURE)
+                action = np.random.normal(mean, std * TEMPERATURE) # Sample action from distribution
             state, reward, done, _ = env.step(action)
-            if PRINTREWARD:
+            if PRINTREWARD: # Print out the reward for each step (debugging)
                 print(f"Normalized Reward: ", reward)
             if done:
                 state = env.reset()
 
-        center_camera_on_humanoid(camera, env.get_attr('data')[0], env.get_attr('model')[0])
+        center_camera_on_humanoid(camera, env.get_attr('data')[0], env.get_attr('model')[0]) # Center camera on humanoid using function from camera.py
             
         # Start ImGui frame
         impl.process_inputs()
         imgui.new_frame()
 
+        # Create simulation stats window
         imgui.set_next_window_position(10, 10, imgui.ONCE)
         imgui.begin("Simulation Stats", True)
         imgui.set_window_size(200, 100, imgui.FIRST_USE_EVER)
@@ -378,23 +406,34 @@ def main():
         imgui.begin("Checkpoint Selector", True)
         imgui.set_window_size(300, 200, imgui.FIRST_USE_EVER)
 
+        # Create window with controls and instructions
         imgui.set_next_window_position(10, 300, imgui.ONCE)
         imgui.begin('Controls', True)
         imgui.text("Hold Alt + Left Mouse to rotate camera")
         imgui.text("Press Space key to pause/unpause")
         imgui.end()
 
-
+         # Checkpoint list selector button functionality
         if imgui.button("Refresh List"):
             update_checkpoint_list()
 
         imgui.separator()
 
+        # Display checkpoint files in a list
         for i, checkpoint_path in enumerate(checkpoint_files):
             filename = os.path.basename(checkpoint_path)
             if imgui.selectable(filename, selected_checkpoint == i)[0]:
                 selected_checkpoint = i
                 model = PPO.load(checkpoint_path, env=env)
+                # Try to load matching VecNormalize stats file
+                norm_path = checkpoint_path.replace('.zip', '') + '_vecnormalize.pkl'
+                if os.path.exists(norm_path):
+                        # Load saved normalization stats
+                        env = VecNormalize.load(norm_path, env)
+                        # This ensures the loaded env knows which environment it's wrapping
+                        env.training = False  # Set to False for evaluation
+                        model.set_env(env)
+                        print(f"Loaded normalization stats from: {norm_path}")
 
         imgui.end()
 
@@ -405,6 +444,7 @@ def main():
         viewport = mujoco.MjrRect(0, 0, 0, 0)
         viewport.width, viewport.height = glfw.get_framebuffer_size(window)
 
+        # Set options for rendering
         mujoco.mjv_updateScene(
             env.get_attr('model')[0],
             env.get_attr('data')[0],
