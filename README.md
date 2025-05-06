@@ -1,4 +1,4 @@
-# SB3Standing
+ # SB3Standing
 Standing (balance board) program implemented with Stable Baselines 3. This is the exhibition version of the project, with code that enables a user to compete with the agent via an MPU6050 Gyro mounted to a physical balance board. The user can also select checkpoints using 3 buttons. All data is sent through an Arduino via serial.
 
 
@@ -13,6 +13,8 @@ https://github.com/user-attachments/assets/58820c0f-c2ad-4ed5-8612-1c10d38cb337
 This project is a reinforcement learning system where humanoid agents learn to maintain balance on a dynamic balance board in the MuJoCo physics simulation, using a carefully crafted PPO implementation. I combined sophisticated machine learning with a physical human-in-the-loop component, allowing users to compete with the AI agent on a real balance board fitted with gyroscope sensors, creating an engaging comparative study of human versus machine learning processes.
 
 Requirements -  
+Python 3.10
+Imgui 2.0
 MuJoCo 3.2.6  
 GLFW 2.8.0  
 Numpy 2.2.0  
