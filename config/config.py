@@ -23,6 +23,7 @@ MAX_TILT_TERMINATION = 0.2 # Maximum board tilt (touching ground)
 SUCCESS_REWARD = 1.0 # Reward for surviving 1000 steps
 SUCCESS_STEPS = 1000 
 
+TEMPERATURE = 0
 
 EARLY_TERMINATION_HEIGHT = 1.2 # Height below which we terminate
 
