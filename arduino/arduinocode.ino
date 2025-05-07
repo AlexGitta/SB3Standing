@@ -1,7 +1,4 @@
 // Edited by Alex Evans from Jeff Rowberg's I2Cdev
-// Changes include adding serial communication for 3 buttons, and some failsafes for the mpu serial comms
-// Sends MPU raw gyro data in the format "ypr "yaw" "pitch" "roll""
-// Sends button data in the format "buts "but1" "but2" "but3""
 
 // I2C device class (I2Cdev) demonstration Arduino sketch for MPU6050 class using DMP (MotionApps v6.12)
 // 6/21/2012 by Jeff Rowberg <jeff@rowberg.net>
@@ -252,10 +249,81 @@ unsigned long lastDataTime = 0;
 const unsigned long WATCHDOG_TIMEOUT = 1000; // 1 second timeout
 
 void loop() {
+  // Track consecutive failures
+  static int failureCount = 0;
+  static unsigned long lastSuccessTime = 0;
+  
   // if programming failed, don't try to do anything
-  if (!dmpReady) return;
+  if (!dmpReady) {
+    // Handle buttons and return
+    readAndPrintButtons();
+    return;
+  }
+  
+  // Read button states
+  readAndPrintButtons();
+  
+  // Check if we've gone too long without data
+  if (millis() - lastDataTime > WATCHDOG_TIMEOUT) {
+    failureCount++;
+    Serial.print("MPU6050 data timeout - ");
+    
+    // Progressive recovery strategy
+    if (failureCount > 5) {
+      Serial.println("Multiple failures - Performing full reset");
+      resetMPU(); // Call the full reset function
+      failureCount = 0;
+    } else {
+      Serial.println("resetting FIFO");
+      mpu.resetFIFO(); // Just reset the FIFO for minor issues
+    }
+    lastDataTime = millis();
+  }
+  
+  //Check FIFO count before trying to read
+  fifoCount = mpu.getFIFOCount();
+  
+  //Detect and handle FIFO overflow
+  if (fifoCount >= 1024) {
+    // FIFO overflow - reset and start fresh
+    Serial.println("FIFO overflow - resetting");
+    mpu.resetFIFO();
+    failureCount++;
+    return;
+  }
+  
+  // read a packet from FIFO
+  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) {
+    // Update the last data time since we got valid data
+    lastDataTime = millis();
+    lastSuccessTime = millis();
+    failureCount = 0; // Reset the failure count on success
+    
+    // Process and display data as before
+    processAndPrintMpuData();
+    
+    // blink LED to indicate activity
+    blinkState = !blinkState;
+    digitalWrite(LED_PIN, blinkState);
+  } else {
+    // No data available this time
+    if (millis() - lastSuccessTime > 3000) { // 3 seconds with no successful reads
+      Serial.println("No valid data for extended period - checking I2C");
+      // Check if MPU is still responding
+      if (!mpu.testConnection()) {
+        Serial.println("MPU connection lost - resetting");
+        resetMPU();
+        lastSuccessTime = millis();
+      }
+    }
+  }
+  
+  //a small delay to prevent overwhelming the I2C bus
+  delay(10); 
+}
 
-  // Read button states (invert since pull-up resistors make pressed=LOW)
+// Helper functions to reduce code duplication
+void readAndPrintButtons() {
   int but1 = !digitalRead(BUTTON1_PIN);
   int but2 = !digitalRead(BUTTON2_PIN);
   int but3 = !digitalRead(BUTTON3_PIN);
@@ -267,49 +335,19 @@ void loop() {
   Serial.print(but3);
   Serial.println();
   Serial.println();
-  
-  //Check if we've gone too long without data
-  if (millis() - lastDataTime > WATCHDOG_TIMEOUT) {
-    Serial.println("MPU6050 data timeout - resetting FIFO");
-    mpu.resetFIFO(); // Reset the FIFO if we haven't received data in a while
-    lastDataTime = 0;
-  }
-  
-  //Check FIFO count before trying to read
-  fifoCount = mpu.getFIFOCount();
-  
-  //Detect and handle FIFO overflow
-  if (fifoCount >= 1024) {
-    // FIFO overflow - reset and start fresh
-    Serial.println("FIFO overflow - resetting");
-    mpu.resetFIFO();
-    return;
-  }
-  
-  // read a packet from FIFO
-  if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { // Get the Latest packet 
-    // Update the last data time since we got valid data
-    lastDataTime = millis();
-    
-    //  code for processing and displaying data
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-    Serial.print("ypr\t");
-    Serial.print(ypr[0] * 180 / M_PI);
-    Serial.print("\t");
-    Serial.print(ypr[1] * 180 / M_PI);
-    Serial.print("\t");
-    Serial.print(ypr[2] * 180 / M_PI);
-    Serial.println();
+}
 
-    // blink LED to indicate activity
-    blinkState = !blinkState;
-    digitalWrite(LED_PIN, blinkState);
-  }
-  
-  //a small delay to prevent overwhelming the I2C bus
-  delay(5);
+void processAndPrintMpuData() {
+  mpu.dmpGetQuaternion(&q, fifoBuffer);
+  mpu.dmpGetGravity(&gravity, &q);
+  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+  Serial.print("ypr\t");
+  Serial.print(ypr[0] * 180 / M_PI);
+  Serial.print("\t");
+  Serial.print(ypr[1] * 180 / M_PI);
+  Serial.print("\t");
+  Serial.print(ypr[2] * 180 / M_PI);
+  Serial.println();
 }
 
 //  a function to reset and reinitialize the MPU if needed
