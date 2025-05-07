@@ -1,7 +1,3 @@
-# Code to recieve MPU gyro values from the arduino, as well as the 3 button presses
-# Using the gyro pitch value, we show a representation of the orientation using a line and a colour change
-# We also use the button presses to change a text file specifying checkpoints to load, as these are read in the exhibmain.py file
-
 import time
 import math
 import sys
@@ -14,7 +10,13 @@ import numpy as np
 STATUS_FILE = "checkpoint.txt"
 
 class MPU6050SerialVisualizer:
-    def __init__(self, port='/dev/ttyUSB0', baud_rate=9600):
+    def __init__(self, port='/dev/ttyUSB0', baud_rate=115200):
+
+        self.port = port
+        self.baud_rate = baud_rate
+        self.last_data_time = time.time()  # Track the last time data was received
+        self.data_timeout = 8  # Timeout in seconds
+    
         # Initialize GLFW
         if not glfw.init():
             print("Failed to initialize GLFW")
@@ -61,6 +63,18 @@ class MPU6050SerialVisualizer:
         
         # For timing/FPS control
         self.previous_time = time.time()
+
+    def reconnect_serial(self):
+        """Attempt to reconnect the serial connection."""
+        try:
+            print("Reconnecting to serial...")
+            self.ser.close()
+            time.sleep(2)  # Wait before reconnecting
+            self.ser = serial.Serial(self.port, self.baud_rate, timeout=1)
+            print(f"Reconnected to Arduino on {self.port} at {self.baud_rate} baud")
+            self.last_data_time = time.time()  # Reset the last data time
+        except Exception as e:
+            print(f"Error reconnecting to serial port: {e}")
         
     def key_callback(self, window, key, scancode, action, mods):
         if key == glfw.KEY_ESCAPE and action == glfw.PRESS:
@@ -68,17 +82,19 @@ class MPU6050SerialVisualizer:
             
     def read_pitch_from_serial(self):
         if self.ser.in_waiting > 0:
+            
             try:
                 line = self.ser.readline().decode('utf-8').strip()
-              #  print(f"Raw line from serial: {line}")  # Debugging line
-                
+           #     print(f"Raw line from serial: {line}")  # Debugging line
+                self.last_data_time = time.time()  # Reset the last data time
                 # Look for the ypr (yaw, pitch, roll) line from the Arduino output
                 if line.startswith("ypr"):
                     # Parse the pitch value (second value in the ypr\t0.00\t0.00\t0.00 format)
                     values = line.split('\t')
                     if len(values) >= 3:
                         # In the Arduino code, the second value (index 2) is the pitch
-                        self.pitch = float(values[2])
+                        self.pitch = float(values[2]) - 35
+                        print(f"Pitch: {self.pitch:.2f}")  # Debugging line
 
                 # Look for button states
                 elif line.startswith("buts"):
@@ -93,7 +109,12 @@ class MPU6050SerialVisualizer:
                     
             except Exception as e:
                 print(f"Error reading from serial: {e}")
-        
+        else : 
+            print("No data available on serial port")
+             # Check if timeout has been exceeded
+            if time.time() - self.last_data_time > self.data_timeout:
+                print("Data timeout exceeded, attempting to reconnect...")
+                self.reconnect_serial()
         return self.pitch
         
     def draw_pitch_indicator(self, pitch_angle):
@@ -115,7 +136,7 @@ class MPU6050SerialVisualizer:
         length = 300
         
         # Calculate endpoints of the rotated line
-        angle_rad = math.radians(self.pitch + 90)
+        angle_rad = math.radians(pitch_angle)
         dx = length * math.sin(angle_rad)  
         dy = length * math.cos(angle_rad)  
         
@@ -145,7 +166,7 @@ class MPU6050SerialVisualizer:
         glVertex2f(x, y)  # Center
         num_segments = 30
         for i in range(num_segments + 1):
-            angle = 2.0 * math.pi * i / num_segments
+            angle =  2 * math.pi * i / num_segments
             glVertex2f(x + math.cos(angle) * radius, y + math.sin(angle) * radius)
         glEnd()
 
@@ -179,7 +200,7 @@ class MPU6050SerialVisualizer:
         #    print("Drawing pitch indicator...")  # Debugging line
             # Update display
             glfw.swap_buffers(self.window)
-            print("Updating display...")  # Debugging line
+          #  print("Updating display...")  # Debugging line
             
             # Poll for events
             glfw.poll_events()
@@ -188,7 +209,7 @@ class MPU6050SerialVisualizer:
             current_time = time.time()
             delta = current_time - self.previous_time
             sleep_time = max(1.0/60.0 - delta, 0)
-            time.sleep(sleep_time)
+           # time.sleep(sleep_time)
             self.previous_time = current_time
             
         # Clean up
@@ -196,9 +217,9 @@ class MPU6050SerialVisualizer:
         glfw.terminate()
 
 if __name__ == "__main__":
-    PORT = 'COM3'  
+    PORT = 'COM5'  
     
-    BAUD_RATE = 9600 
+    BAUD_RATE = 115200 
     
     try:
         visualizer = MPU6050SerialVisualizer(port=PORT, baud_rate=BAUD_RATE)
