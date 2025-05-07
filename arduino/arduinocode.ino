@@ -31,6 +31,7 @@
 // I2Cdev and MPU6050 must be installed as libraries, or else the .cpp/.h files
 // for both classes must be in the include path of your project
 #include "I2Cdev.h"
+#include <avr/wdt.h>
 
 #include "MPU6050_6Axis_MotionApps612.h"
 //#include "MPU6050.h" // not necessary if using MotionApps include file
@@ -151,6 +152,8 @@ void dmpDataReady() {
 // ================================================================
 
 void setup() {
+
+  wdt_disable();
   // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   Wire.begin();
@@ -162,7 +165,7 @@ void setup() {
   // initialize serial communication
   // (115200 chosen because it is required for Teapot Demo output, but it's
   // really up to you depending on your project)
-  Serial.begin(9600);
+  Serial.begin(115200);
   // Set button pins as inputs with internal pull-up resistors
   pinMode(BUTTON1_PIN, INPUT_PULLUP);
   pinMode(BUTTON2_PIN, INPUT_PULLUP);
@@ -178,6 +181,7 @@ void setup() {
   // initialize device
  // Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
+  mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_1000);
   pinMode(INTERRUPT_PIN, INPUT);
 
   // verify connection
@@ -237,6 +241,9 @@ void setup() {
 
   // configure LED for output
   pinMode(LED_PIN, OUTPUT);
+
+  // Enable the watchdog with a 2-second timeout
+  wdt_enable(WDTO_2S);
 }
 
 
@@ -249,6 +256,7 @@ unsigned long lastDataTime = 0;
 const unsigned long WATCHDOG_TIMEOUT = 1000; // 1 second timeout
 
 void loop() {
+  wdt_reset();
   // Track consecutive failures
   static int failureCount = 0;
   static unsigned long lastSuccessTime = 0;
@@ -267,7 +275,8 @@ void loop() {
   if (millis() - lastDataTime > WATCHDOG_TIMEOUT) {
     failureCount++;
     Serial.print("MPU6050 data timeout - ");
-    
+    resetMPU();
+
     // Progressive recovery strategy
     if (failureCount > 5) {
       Serial.println("Multiple failures - Performing full reset");
@@ -317,9 +326,10 @@ void loop() {
       }
     }
   }
-  
+  wdt_reset();
   //a small delay to prevent overwhelming the I2C bus
   delay(10); 
+
 }
 
 // Helper functions to reduce code duplication
