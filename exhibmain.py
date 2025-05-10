@@ -8,6 +8,7 @@
 # The Arduino setup consists of an MPU6050 gyroscope, and 3 buttons to select different checkpoints.
 # The Arduino code changes the contents of a text file to indicate which checkpoint to load.
 # This is the version of the code designed for exhibition. For the training version, see the branch tagged "main".
+
 # By Alex Evans
 
 import mujoco
@@ -32,10 +33,22 @@ import argparse
 class StandupEnv(gym.Env):
     def __init__(self):
         super(StandupEnv, self).__init__()
-        with open('resources/humanoidnew1.xml', 'r') as f: # Open xml file for humanoid model
+        with open('resources/humanoidnew1ball.xml', 'r') as f: # Open xml file for humanoid model (changed to include ball)
             humanoid = f.read()
             self.model = mujoco.MjModel.from_xml_string(humanoid) # set model and data values 
             self.data = mujoco.MjData(self.model)
+        
+        try:
+            self.ball_body_id = self.model.body('projectile_ball').id
+            # Assuming the free joint is the first joint of the ball body
+            ball_joint_id = self.model.body_jntadr[self.ball_body_id]
+            self.ball_qpos_addr = self.model.jnt_qposadr[ball_joint_id]
+            self.ball_qvel_addr = self.model.jnt_dofadr[ball_joint_id]
+            self.ball_geom_id = self.model.geom('ball_geom').id
+        except KeyError:
+            print("Warning: 'projectile_ball' or 'ball_geom' not found in model. Ball launching will not work.")
+            self.ball_body_id = -1
+            self.ball_geom_id = -1
 
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.model.nu,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(len(self.get_state()),), dtype=np.float32)
@@ -43,18 +56,42 @@ class StandupEnv(gym.Env):
         self.episode_reward = 0
         self.termination_penalty_applied = False
         self.apply_random_force = False
+
+        
     
     def seed(self, seed=None): # Function to set a random initial set of values for an environment
         self.np_random, seed = gym.utils.seeding.np_random(seed)
         return [seed]
 
     def get_state(self): # function to return current state of simulation environment
-        return np.concatenate([
-            self.data.qpos.flat,  # Relative joint positions
-            self.data.qvel.flat,  # Relative joint velocities
-            self.data.qfrc_actuator.flat, # Actuator forces
-            self.data.cfrc_ext.flat,   # External forces
+        if self.ball_body_id != -1 and hasattr(self, 'ball_qpos_addr') and hasattr(self, 'ball_qvel_addr'):
+            # Exclude ball's qpos: take elements before the ball's qpos starts
+            qpos_obs = self.data.qpos.flat[:self.ball_qpos_addr]
+            
+            # Exclude ball's qvel: take elements before the ball's qvel starts
+            qvel_obs = self.data.qvel.flat[:self.ball_qvel_addr]
+            
+            # Exclude ball's external forces from cfrc_ext
+            num_bodies = self.model.nbody
+            is_not_ball_body = np.ones(num_bodies, dtype=bool)
+            is_not_ball_body[self.ball_body_id] = False
+            cfrc_ext_obs = self.data.cfrc_ext[is_not_ball_body].flat
+        else:
+            
+            # Ball not present or attributes not found, use full state
+            qpos_obs = self.data.qpos.flat
+            qvel_obs = self.data.qvel.flat
+            cfrc_ext_obs = self.data.cfrc_ext.flat
+
+        final_obs = np.concatenate([
+            qpos_obs,
+            qvel_obs,
+            self.data.qfrc_actuator.flat, 
+            cfrc_ext_obs,                  
         ])
+
+        final_obs = final_obs[:209] # Hacky method to get the correct size of the observation space
+        return final_obs
 
     def reset(self): # function to reset the environment on failure of task
         mujoco.mj_resetData(self.model, self.data)
@@ -64,6 +101,15 @@ class StandupEnv(gym.Env):
         self.episode_reward = 0
         self.termination_penalty_applied = False
         self.data.qvel[:] = 0
+    
+        if self.ball_body_id != -1:
+                # Reset ball position (e.g., far away) and velocity
+                self.data.qpos[self.ball_qpos_addr:self.ball_qpos_addr+3] = [0, 10, -10.0] # Position
+                self.data.qpos[self.ball_qpos_addr+3:self.ball_qpos_addr+7] = [1, 0, 0, 0] # Quaternion (identity)
+                self.data.qvel[self.ball_qvel_addr:self.ball_qvel_addr+6] = 0 # Velocity (linear and angular)
+                # Make ball visible if it was hidden
+                self.model.geom_rgba[self.ball_geom_id, 3] = 1.0
+
         mujoco.mj_forward(self.model, self.data)
         return self.get_state()
 
@@ -82,9 +128,40 @@ class StandupEnv(gym.Env):
 
     def apply_force_to_torso(self): # apply a random force to the torso body
         torso_id = self.model.body('torso').id
-        force = np.random.uniform(-200, 200, size=300)
+        force = np.random.uniform(-200, 200, size=3)
         self.data.xfrc_applied[torso_id, :3] = force
         print("Force applied to torso:", force)
+
+    def launch_ball(self, launch_origin_pos, launch_target_pos, launch_speed): # function to launch a ball from the humanoid
+        if self.ball_body_id == -1:
+            print("Cannot launch ball, 'projectile_ball' not found in model.")
+            return
+
+        # Set ball position and orientation
+        self.data.qpos[self.ball_qpos_addr:self.ball_qpos_addr+3] = launch_origin_pos
+        self.data.qpos[self.ball_qpos_addr+3:self.ball_qpos_addr+7] = [1, 0, 0, 0] # Identity quaternion
+
+        # Calculate velocity vector
+        direction = np.array(launch_target_pos) - np.array(launch_origin_pos)
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            print("Warning: Launch target and origin are the same. Ball not launched.")
+            return
+        
+        velocity_vector = (direction / norm) * launch_speed
+
+        # Set ball linear velocity
+        self.data.qvel[self.ball_qvel_addr:self.ball_qvel_addr+3] = velocity_vector
+        # Set ball angular velocity to zero
+        self.data.qvel[self.ball_qvel_addr+3:self.ball_qvel_addr+6] = 0
+        
+        # Make ball visible
+        self.model.geom_rgba[self.ball_geom_id, 3] = 1.0
+
+
+        mujoco.mj_forward(self.model, self.data) # Update physics state
+        print(f"Ball launched from {launch_origin_pos} towards {launch_target_pos} with speed {launch_speed}")
+
 
     def calculate_reward(self):
 
@@ -123,7 +200,7 @@ class StandupEnv(gym.Env):
         else:
             termination_penalty = 0.0
 
-        if self.episode_steps > SUCCESS_STEPS:
+        if self.episode_steps > SUCCESS_STEPS and head_height >= TARGET_HEIGHT:
             # Reward for successful completion
             success_reward = SUCCESS_REWARD
             done = True
@@ -131,7 +208,7 @@ class StandupEnv(gym.Env):
             success_reward = 0.0
 
             # Early termination if fallen or balance board touches ground
-            done = ((head_height < EARLY_TERMINATION_HEIGHT) or tilt_side > MAX_TILT_TERMINATION)
+            done = (head_height < EARLY_TERMINATION_HEIGHT) #or tilt_side > MAX_TILT_TERMINATION)
 
         # Combine components 
         reward = survival_reward + termination_penalty + success_reward + balance_penalty + action_penalty + height_reward
@@ -141,7 +218,7 @@ class StandupEnv(gym.Env):
 
         # Reward inspection output
         if PRINTREWARD:
-            print(f"Height: {height_reward:.2f}, " 
+            print(f"Height: {head_height:.2f}, " 
                 f"Balance: {balance_penalty:.2f}, Action: {action_penalty:.2f}, "
                 f"Survival: {survival_reward:.2f}, Step: {self.episode_steps}, Total: {reward:.2f}")
     
@@ -302,10 +379,23 @@ def main():
                 elif key == glfw.KEY_SPACE: # Space key to pause/unpause simulation
                     paused = not paused
                 elif key == glfw.KEY_F: # F key to apply random force to torso
-                    real_env = env.venv.envs[0]
-                    while hasattr(real_env, "env"): 
-                        real_env = real_env.env
-                    real_env.apply_random_force = True
+                    if hasattr(env.venv.envs[0], 'launch_ball'):
+                        current_model = env.get_attr('model')[0]
+                        current_data = env.get_attr('data')[0]
+                        
+                        torso_id = current_model.body('torso').id
+                        torso_pos = current_data.xpos[torso_id]
+                        
+                        # Define launch parameters
+                        # Launch from 2 units in front of torso, at torso height
+                        launch_origin = np.array([torso_pos[0] + 2.0, torso_pos[1], torso_pos[2]]) 
+                        launch_target = torso_pos
+                        launch_speed = 10.0 # m/s
+                        
+                        # Call launch_ball method on the underlying environment
+                        env.env_method('launch_ball', launch_origin, launch_target, launch_speed, indices=[0])
+                    else:
+                        print("Launch ball function not available in environment.")
             # Track Alt key for camera mode
             input_state.camera_mode = (mods & glfw.MOD_ALT)
 
@@ -381,6 +471,7 @@ def main():
                     mean = dist.distribution.mean.cpu().numpy() # Get mean  and std from distribution
                     std = dist.distribution.stddev.cpu().numpy()
                 action = np.random.normal(mean, std * TEMPERATURE) # Sample action from distribution
+                action, _ = model.predict(state, deterministic=True)
             state, reward, done, _ = env.step(action)
             if PRINTREWARD: # Print out the reward for each step (debugging)
                 print(f"Normalized Reward: ", reward)
