@@ -5,10 +5,8 @@ Standing (balance board) program implemented with Stable Baselines 3. This is th
 
 
 
+https://github.com/user-attachments/assets/eaed6301-a57a-4da6-8a55-507ff74063e1
 
-
-
-Uploading progressvidnew720.mp4…
 
 
 
