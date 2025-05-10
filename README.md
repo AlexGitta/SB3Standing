@@ -8,7 +8,10 @@ Standing (balance board) program implemented with Stable Baselines 3. This is th
 
 
 
-https://github.com/user-attachments/assets/58820c0f-c2ad-4ed5-8612-1c10d38cb337
+Uploading progressvidnew720.mp4…
+
+
+
 
 This project is a reinforcement learning system where humanoid agents learn to maintain balance on a dynamic balance board in the MuJoCo physics simulation, using a carefully crafted PPO implementation. I combined sophisticated machine learning with a physical human-in-the-loop component, allowing users to compete with the AI agent on a real balance board fitted with gyroscope sensors, creating an engaging comparative study of human versus machine learning processes.
 
